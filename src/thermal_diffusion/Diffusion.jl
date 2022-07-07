@@ -3,6 +3,12 @@ struct ThermalParameters{T}
     ρCp::T # density * heat capacity
 end
 
+@parallel function update_T!(Told, ΔT, T)
+    @all(ΔT) = @all(T) - @all(Told)
+    @all(Told) = @all(T)
+    return nothing
+end
+
 # 1D THERMAL DIFFUSION MODULE
 
 module ThermalDiffusion1D
@@ -14,7 +20,7 @@ using LinearAlgebra
 using Printf
 using CUDA
 
-import JustRelax: ThermalParameters, solve!, assign!, thermal_boundary_conditions!
+import JustRelax: ThermalParameters, solve!, assign!, thermal_boundary_conditions!, update_T!
 import JustRelax: ThermalArrays, PTThermalCoeffs
 
 export solve!
@@ -124,7 +130,7 @@ function JustRelax.solve!(
 
     av_time = wtime0 / iter # average time per iteration
 
-    @parallel assign!(thermal.Told, thermal.T)
+    @parallel update_T!(thermal.Told, thermal.ΔT, thermal.T)
 
     if isnan(err)
         error("NaN")
@@ -148,7 +154,7 @@ using LinearAlgebra
 using CUDA
 using Printf
 
-import JustRelax: ThermalParameters, solve!, assign!, thermal_boundary_conditions!
+import JustRelax: ThermalParameters, solve!, assign!, thermal_boundary_conditions!, update_T!
 import JustRelax: ThermalArrays, PTThermalCoeffs, solve!
 
 export solve!
@@ -274,7 +280,7 @@ function JustRelax.solve!(
 
     av_time = wtime0 / iter # average time per iteration
 
-    @parallel assign!(thermal.Told, thermal.T)
+    @parallel update_T!(thermal.Told, thermal.ΔT, thermal.T)
 
     if isnan(err)
         error("NaN")
@@ -300,7 +306,7 @@ using Printf
 using CUDA
 
 import JustRelax:
-    IGG, ThermalParameters, solve!, assign!, norm_mpi, thermal_boundary_conditions!
+    IGG, ThermalParameters, solve!, assign!, norm_mpi, thermal_boundary_conditions!, update_T!
 import JustRelax: ThermalArrays, PTThermalCoeffs, solve!
 
 export solve!
@@ -448,8 +454,8 @@ function JustRelax.solve!(
 
     av_time = wtime0 / iter # average time per iteration
 
-    @parallel assign!(thermal.Told, thermal.T)
-
+    @parallel update_T!(thermal.Told, thermal.ΔT, thermal.T)
+    
     if isnan(err)
         error("NaN")
     end
