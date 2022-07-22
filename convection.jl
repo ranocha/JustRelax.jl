@@ -33,8 +33,13 @@ end
     return nothing
 end
 
+@parallel function update_buoyancy!(fy, T, ρ0gα)
+    @all(fy) = -ρ0gα.* @all(T)
+    return nothing
+end
+
 function twoxtwo_particles2D(nxcell, max_xcell, x, y, dx, dy, nx, ny)
-    ncells = nx * ny
+    ncells = (nx-1) * (ny-1)
     np = max_xcell * ncells
     dx_2 = dx * 0.5
     dy_2 = dy * 0.5
@@ -46,7 +51,7 @@ function twoxtwo_particles2D(nxcell, max_xcell, x, y, dx, dy, nx, ny)
     inject = falses(nx, ny)
     index = falses(max_xcell, nx, ny)
     idx = 1
-    @inbounds for j in 1:ny, i in 1:nx
+    @inbounds for j in 1:ny-1, i in 1:nx-1
         # center of the cell
         x0, y0 = x[i], y[j]
         # index of first particle in cell
@@ -82,10 +87,15 @@ end
 
 function velocity_grids(xvi::NTuple{2, T}, di) where {T}
     dx, dy = di
-    yvx = xvi[2][1]-dy/2:dy:xvi[2][end]+dy/2
-    xvy = xvi[1][1]-dx/2:dx:xvi[1][end]+dx/2
-    grid_vx = (xvi[1], yvx)
-    grid_vy = (xvy, xvi[2])
+    # yvx = xvi[2][1]-dy/2:dy:xvi[2][end]+dy/2
+    # xvy = xvi[1][1]-dx/2:dx:xvi[1][end]+dx/2
+    # grid_vx = (xvi[1], yvx)
+    # grid_vy = (xvy, xvi[2])
+
+    xvx = xvi[1][1]-dx/2:dx:xvi[1][end]+dx/2
+    yvy = xvi[2][1]-dy/2:dy:xvi[2][end]+dy/2
+    grid_vx = (xvx, xvi[2])
+    grid_vy = (xvi[1], yvy)
 
     return grid_vx, grid_vy
 end
@@ -177,9 +187,10 @@ function thermal_convection2D(; nx=64, ny=64, lx=3e0, ly=1e0)
     # Physical time loop
     t = 0.0
     it = 0
-    nt = 10
+    nt = 100
     local iters
     while it < nt
+        
         # Stokes solver ---------------
         iters = solve!(
             stokes, 
@@ -220,30 +231,39 @@ function thermal_convection2D(; nx=64, ny=64, lx=3e0, ly=1e0)
         advection_RK2_edges!(particles, V, grid_vx, grid_vy, dt, 2/3) 
         # advect particles in memory
         shuffle_particles_vertex!(particles, xvi, particle_args)
+        # check if we need to inject particles
+        check_injection(particles) && inject_particles!(particles, particle_args, (thermal.ΔT,), xvi)
         # interpolate fields from particle to grid vertices
         gathering_xvertex!(thermal.ΔT, pT, xvi,  particles.coords)
-        # check if we need to inject particles
-        check_injection(particles) && inject_particles!(particles, args, (thermal.ΔT,), grid)
         # update Temperature field
+        @assert !any(isnan, thermal.T)
+        @assert !any(isnan, thermal.ΔT)
+
         @parallel add_dTdt(thermal.T, thermal.ΔT)
-    
         # ------------------------------
+
+        @assert !any(isnan, thermal.T)
+        @assert !any(isnan, thermal.ΔT)
 
         # Update viscosity
         @parallel viscosity!(η, thermal.T, ΔT, dη_dT)
+
         thermal.T[:,1  ] .=  ΔT/2.0
         thermal.T[:,end] .= -ΔT/2.0
         
         # Update buoyancy
-        fy = -ρ0gα.* thermal.T
+        @parallel update_buoyancy!(fy, thermal.T, ρ0gα)
 
-        it += 1
+        @show it += 1
         t += dt
 
         # @show extrema(stokes.V.Vy)
-        # heatmap(xci[1], xci[2], thermal.T , colormap=:vik, colorrange=(-0.5, 0.5))
+        # heatmap(xvi[1], xvi[2], thermal.T , colormap=:vik, colorrange=(-0.5, 0.5))
 
     end
 
     return (ni=ni, xci=xci, li=li, di=di), thermal, iters
 end
+
+X = [x for x in xvi[1], y in xvi[2]]
+Y = [y for x in xvi[1], y in xvi[2]]
