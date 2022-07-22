@@ -39,7 +39,9 @@ end
 end
 
 function twoxtwo_particles2D(nxcell, max_xcell, x, y, dx, dy, nx, ny)
-    ncells = (nx-1) * (ny-1)
+    nx -= 1
+    ny -= 1
+    ncells = nx * ny
     np = max_xcell * ncells
     dx_2 = dx * 0.5
     dy_2 = dy * 0.5
@@ -173,7 +175,7 @@ function thermal_convection2D(; nx=64, ny=64, lx=3e0, ly=1e0)
 
     # Initialize particles -------------------------------
     nxcell, max_xcell = 4, 6
-    particles = twoxtwo_particles2D(nxcell, max_xcell, xci[1], xci[2], di[1], di[1], nx-1, ny-1)
+    particles = twoxtwo_particles2D(nxcell, max_xcell, xci[1], xci[2], di[1], di[1], nx, ny)
     # velocity grids
     grid_vx, grid_vy = velocity_grids(xvi, di)
     # temperature
@@ -265,5 +267,21 @@ function thermal_convection2D(; nx=64, ny=64, lx=3e0, ly=1e0)
     return (ni=ni, xci=xci, li=li, di=di), thermal, iters
 end
 
-X = [x for x in xvi[1], y in xvi[2]]
-Y = [y for x in xvi[1], y in xvi[2]]
+X = [x for x in xvi[1], y in xvi[2]][:]
+Y = [y for x in xvi[1], y in xvi[2]][:]
+
+
+# @inline function isemptycell(
+#     icell::Integer, jcell::Integer, index::AbstractArray{T,N}, min_xcell::Integer
+# ) where {T,N}
+#     val = 0
+#     for i in axes(index, 1)
+#         @inbounds index[i, icell, jcell] && (val += 1)
+#     end
+#     @show val
+#     return val ≥ min_xcell ? false : true
+# end
+
+# isemptycell(
+#    1,1, particles.index, particles.min_xcell
+# )

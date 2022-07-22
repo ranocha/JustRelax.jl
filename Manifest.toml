@@ -325,7 +325,7 @@ version = "1.4.1"
 
 [[JustPIC]]
 deps = ["CUDA", "CellArrays", "MAT", "MuladdMacro", "ParallelStencil", "StaticArrays", "StencilInterpolations", "VectorizationBase"]
-git-tree-sha1 = "c541b44859bb8f441f5035162cec3fb4018eb770"
+git-tree-sha1 = "7bf05217d42b92a957a151dc43c2e527ef937fb3"
 repo-rev = "albert-dev"
 repo-url = "https://github.com/JuliaGeodynamics/JustPIC.jl.git"
 uuid = "10dc771f-8528-4cd9-9d3b-b21b2e693339"
@@ -690,7 +690,7 @@ uuid = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 
 [[StencilInterpolations]]
 deps = ["CSV", "CUDA", "DataFrames", "MuladdMacro", "SIMD", "VectorizationBase"]
-git-tree-sha1 = "486769a2a3a6a873ed5699a2fabd6fe37230fa10"
+git-tree-sha1 = "1cc86c69a25e3daded1eac9fa6d360fb2dd45461"
 repo-rev = "main"
 repo-url = "https://github.com/albert-de-montserrat/StencilInterpolations.jl.git"
 uuid = "bfc67a74-a27b-455a-b689-c68d3806f53b"
