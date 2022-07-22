@@ -125,6 +125,7 @@ end
     dx::T,
     dy::T,
 ) where {T}
+
     @all(τxx) =
         (@all(τxx) + @all(τxx_o) * @Gr() + T(2) * @all(Gdτ) * (@d_xa(Vx) / dx)) /
         (one(T) + @all(Gdτ) / @all(η) + @Gr())
@@ -314,171 +315,171 @@ function update_τ_o!(stokes::StokesArrays{ViscoElastic,A,B,C,D,3}) where {A,B,C
     )
 end
 
-macro inn_yz_Gdτ(ix, iy, iz)
-    return esc(:(Gdτ[$ix, $iy + 1, $iz + 1]))
-end
-macro inn_xz_Gdτ(ix, iy, iz)
-    return esc(:(Gdτ[$ix + 1, $iy, $iz + 1]))
-end
-macro inn_xy_Gdτ(ix, iy, iz)
-    return esc(:(Gdτ[$ix + 1, $iy + 1, $iz]))
-end
-macro inn_yz_η(ix, iy, iz)
-    return esc(:(η[$ix, $iy + 1, $iz + 1]))
-end
-macro inn_xz_η(ix, iy, iz)
-    return esc(:(η[$ix + 1, $iy, $iz + 1]))
-end
-macro inn_xy_η(ix, iy, iz)
-    return esc(:(η[$ix + 1, $iy + 1, $iz]))
-end
-macro av_xyi_Gdτ(ix, iy, iz)
-    return esc(
-        :(
-            (
-                Gdτ[$ix, $iy, $iz + 1] +
-                Gdτ[$ix + 1, $iy, $iz + 1] +
-                Gdτ[$ix, $iy + 1, $iz + 1] +
-                Gdτ[$ix + 1, $iy + 1, $iz + 1]
-            ) * 0.25
-        ),
-    )
-end
-macro av_xzi_Gdτ(ix, iy, iz)
-    return esc(
-        :(
-            (
-                Gdτ[$ix, $iy + 1, $iz] +
-                Gdτ[$ix + 1, $iy + 1, $iz] +
-                Gdτ[$ix, $iy + 1, $iz + 1] +
-                Gdτ[$ix + 1, $iy + 1, $iz + 1]
-            ) * 0.25
-        ),
-    )
-end
-macro av_yzi_Gdτ(ix, iy, iz)
-    return esc(
-        :(
-            (
-                Gdτ[$ix + 1, $iy, $iz] +
-                Gdτ[$ix + 1, $iy + 1, $iz] +
-                Gdτ[$ix + 1, $iy, $iz + 1] +
-                Gdτ[$ix + 1, $iy + 1, $iz + 1]
-            ) * 0.25
-        ),
-    )
-end
+# macro inn_yz_Gdτ(ix, iy, iz)
+#     return esc(:(Gdτ[$ix, $iy + 1, $iz + 1]))
+# end
+# macro inn_xz_Gdτ(ix, iy, iz)
+#     return esc(:(Gdτ[$ix + 1, $iy, $iz + 1]))
+# end
+# macro inn_xy_Gdτ(ix, iy, iz)
+#     return esc(:(Gdτ[$ix + 1, $iy + 1, $iz]))
+# end
+# macro inn_yz_η(ix, iy, iz)
+#     return esc(:(η[$ix, $iy + 1, $iz + 1]))
+# end
+# macro inn_xz_η(ix, iy, iz)
+#     return esc(:(η[$ix + 1, $iy, $iz + 1]))
+# end
+# macro inn_xy_η(ix, iy, iz)
+#     return esc(:(η[$ix + 1, $iy + 1, $iz]))
+# end
+# macro av_xyi_Gdτ(ix, iy, iz)
+#     return esc(
+#         :(
+#             (
+#                 Gdτ[$ix, $iy, $iz + 1] +
+#                 Gdτ[$ix + 1, $iy, $iz + 1] +
+#                 Gdτ[$ix, $iy + 1, $iz + 1] +
+#                 Gdτ[$ix + 1, $iy + 1, $iz + 1]
+#             ) * 0.25
+#         ),
+#     )
+# end
+# macro av_xzi_Gdτ(ix, iy, iz)
+#     return esc(
+#         :(
+#             (
+#                 Gdτ[$ix, $iy + 1, $iz] +
+#                 Gdτ[$ix + 1, $iy + 1, $iz] +
+#                 Gdτ[$ix, $iy + 1, $iz + 1] +
+#                 Gdτ[$ix + 1, $iy + 1, $iz + 1]
+#             ) * 0.25
+#         ),
+#     )
+# end
+# macro av_yzi_Gdτ(ix, iy, iz)
+#     return esc(
+#         :(
+#             (
+#                 Gdτ[$ix + 1, $iy, $iz] +
+#                 Gdτ[$ix + 1, $iy + 1, $iz] +
+#                 Gdτ[$ix + 1, $iy, $iz + 1] +
+#                 Gdτ[$ix + 1, $iy + 1, $iz + 1]
+#             ) * 0.25
+#         ),
+#     )
+# end
 
-macro harm_xyi_Gdτ(ix, iy, iz)
-    return esc(
-        :(
-            1.0 / (
-                1.0 / Gdτ[$ix, $iy, $iz + 1] +
-                1.0 / Gdτ[$ix + 1, $iy, $iz + 1] +
-                1.0 / Gdτ[$ix, $iy + 1, $iz + 1] +
-                1.0 / Gdτ[$ix + 1, $iy + 1, $iz + 1]
-            ) * 4.0
-        ),
-    )
-end
-macro harm_xzi_Gdτ(ix, iy, iz)
-    return esc(
-        :(
-            1.0 / (
-                1.0 / Gdτ[$ix, $iy + 1, $iz] +
-                1.0 / Gdτ[$ix + 1, $iy + 1, $iz] +
-                1.0 / Gdτ[$ix, $iy + 1, $iz + 1] +
-                1.0 / Gdτ[$ix + 1, $iy + 1, $iz + 1]
-            ) * 4.0
-        ),
-    )
-end
-macro harm_yzi_Gdτ(ix, iy, iz)
-    return esc(
-        :(
-            1.0 / (
-                1.0 / Gdτ[$ix + 1, $iy, $iz] +
-                1.0 / Gdτ[$ix + 1, $iy + 1, $iz] +
-                1.0 / Gdτ[$ix + 1, $iy, $iz + 1] +
-                1.0 / Gdτ[$ix + 1, $iy + 1, $iz + 1]
-            ) * 4.0
-        ),
-    )
-end
+# macro harm_xyi_Gdτ(ix, iy, iz)
+#     return esc(
+#         :(
+#             1.0 / (
+#                 1.0 / Gdτ[$ix, $iy, $iz + 1] +
+#                 1.0 / Gdτ[$ix + 1, $iy, $iz + 1] +
+#                 1.0 / Gdτ[$ix, $iy + 1, $iz + 1] +
+#                 1.0 / Gdτ[$ix + 1, $iy + 1, $iz + 1]
+#             ) * 4.0
+#         ),
+#     )
+# end
+# macro harm_xzi_Gdτ(ix, iy, iz)
+#     return esc(
+#         :(
+#             1.0 / (
+#                 1.0 / Gdτ[$ix, $iy + 1, $iz] +
+#                 1.0 / Gdτ[$ix + 1, $iy + 1, $iz] +
+#                 1.0 / Gdτ[$ix, $iy + 1, $iz + 1] +
+#                 1.0 / Gdτ[$ix + 1, $iy + 1, $iz + 1]
+#             ) * 4.0
+#         ),
+#     )
+# end
+# macro harm_yzi_Gdτ(ix, iy, iz)
+#     return esc(
+#         :(
+#             1.0 / (
+#                 1.0 / Gdτ[$ix + 1, $iy, $iz] +
+#                 1.0 / Gdτ[$ix + 1, $iy + 1, $iz] +
+#                 1.0 / Gdτ[$ix + 1, $iy, $iz + 1] +
+#                 1.0 / Gdτ[$ix + 1, $iy + 1, $iz + 1]
+#             ) * 4.0
+#         ),
+#     )
+# end
 
-macro av_xyi_η(ix, iy, iz)
-    return esc(
-        :(
-            (
-                η[$ix, $iy, $iz + 1] +
-                η[$ix + 1, $iy, $iz + 1] +
-                η[$ix, $iy + 1, $iz + 1] +
-                η[$ix + 1, $iy + 1, $iz + 1]
-            ) * 0.25
-        ),
-    )
-end
-macro av_xzi_η(ix, iy, iz)
-    return esc(
-        :(
-            (
-                η[$ix, $iy + 1, $iz] +
-                η[$ix + 1, $iy + 1, $iz] +
-                η[$ix, $iy + 1, $iz + 1] +
-                η[$ix + 1, $iy + 1, $iz + 1]
-            ) * 0.25
-        ),
-    )
-end
-macro av_yzi_η(ix, iy, iz)
-    return esc(
-        :(
-            (
-                η[$ix + 1, $iy, $iz] +
-                η[$ix + 1, $iy + 1, $iz] +
-                η[$ix + 1, $iy, $iz + 1] +
-                η[$ix + 1, $iy + 1, $iz + 1]
-            ) * 0.25
-        ),
-    )
-end
+# macro av_xyi_η(ix, iy, iz)
+#     return esc(
+#         :(
+#             (
+#                 η[$ix, $iy, $iz + 1] +
+#                 η[$ix + 1, $iy, $iz + 1] +
+#                 η[$ix, $iy + 1, $iz + 1] +
+#                 η[$ix + 1, $iy + 1, $iz + 1]
+#             ) * 0.25
+#         ),
+#     )
+# end
+# macro av_xzi_η(ix, iy, iz)
+#     return esc(
+#         :(
+#             (
+#                 η[$ix, $iy + 1, $iz] +
+#                 η[$ix + 1, $iy + 1, $iz] +
+#                 η[$ix, $iy + 1, $iz + 1] +
+#                 η[$ix + 1, $iy + 1, $iz + 1]
+#             ) * 0.25
+#         ),
+#     )
+# end
+# macro av_yzi_η(ix, iy, iz)
+#     return esc(
+#         :(
+#             (
+#                 η[$ix + 1, $iy, $iz] +
+#                 η[$ix + 1, $iy + 1, $iz] +
+#                 η[$ix + 1, $iy, $iz + 1] +
+#                 η[$ix + 1, $iy + 1, $iz + 1]
+#             ) * 0.25
+#         ),
+#     )
+# end
 
-macro harm_xyi_η(ix, iy, iz)
-    return esc(
-        :(
-            1.0 / (
-                1.0 / η[$ix, $iy, $iz + 1] +
-                1.0 / η[$ix + 1, $iy, $iz + 1] +
-                1.0 / η[$ix, $iy + 1, $iz + 1] +
-                1.0 / η[$ix + 1, $iy + 1, $iz + 1]
-            ) * 4.0
-        ),
-    )
-end
-macro harm_xzi_η(ix, iy, iz)
-    return esc(
-        :(
-            1.0 / (
-                1.0 / η[$ix, $iy + 1, $iz] +
-                1.0 / η[$ix + 1, $iy + 1, $iz] +
-                1.0 / η[$ix, $iy + 1, $iz + 1] +
-                1.0 / η[$ix + 1, $iy + 1, $iz + 1]
-            ) * 4.0
-        ),
-    )
-end
-macro harm_yzi_η(ix, iy, iz)
-    return esc(
-        :(
-            1.0 / (
-                1.0 / η[$ix + 1, $iy, $iz] +
-                1.0 / η[$ix + 1, $iy + 1, $iz] +
-                1.0 / η[$ix + 1, $iy, $iz + 1] +
-                1.0 / η[$ix + 1, $iy + 1, $iz + 1]
-            ) * 4.0
-        ),
-    )
-end
+# macro harm_xyi_η(ix, iy, iz)
+#     return esc(
+#         :(
+#             1.0 / (
+#                 1.0 / η[$ix, $iy, $iz + 1] +
+#                 1.0 / η[$ix + 1, $iy, $iz + 1] +
+#                 1.0 / η[$ix, $iy + 1, $iz + 1] +
+#                 1.0 / η[$ix + 1, $iy + 1, $iz + 1]
+#             ) * 4.0
+#         ),
+#     )
+# end
+# macro harm_xzi_η(ix, iy, iz)
+#     return esc(
+#         :(
+#             1.0 / (
+#                 1.0 / η[$ix, $iy + 1, $iz] +
+#                 1.0 / η[$ix + 1, $iy + 1, $iz] +
+#                 1.0 / η[$ix, $iy + 1, $iz + 1] +
+#                 1.0 / η[$ix + 1, $iy + 1, $iz + 1]
+#             ) * 4.0
+#         ),
+#     )
+# end
+# macro harm_yzi_η(ix, iy, iz)
+#     return esc(
+#         :(
+#             1.0 / (
+#                 1.0 / η[$ix + 1, $iy, $iz] +
+#                 1.0 / η[$ix + 1, $iy + 1, $iz] +
+#                 1.0 / η[$ix + 1, $iy, $iz + 1] +
+#                 1.0 / η[$ix + 1, $iy + 1, $iz + 1]
+#             ) * 4.0
+#         ),
+#     )
+# end
 
 @parallel_indices (ix, iy, iz) function compute_P_τ!(
     P::AbstractArray{T,3},
@@ -506,6 +507,64 @@ end
     _dy::T,
     _dz::T,
 ) where {T,M}
+
+    # closures ---------------------------------------------
+    @inline _inn_yz_Gdτ(ix, iy, iz) = Gdτ[ix, iy + 1, iz + 1]
+    @inline _inn_xz_Gdτ(ix, iy, iz) = Gdτ[ix + 1, iy, iz + 1]
+    @inline _inn_xy_Gdτ(ix, iy, iz) = Gdτ[ix + 1, iy + 1, iz]
+    @inline _inn_yz_η(ix, iy, iz) = η[ix, iy + 1, iz + 1]
+    @inline _inn_xz_η(ix, iy, iz) = η[ix + 1, iy, iz + 1]
+    @inline _inn_xy_η(ix, iy, iz) = η[ix + 1, iy + 1, iz]
+    @inline function _harm_xyi_Gdτ(ix, iy, iz)
+        1.0 / (
+            1.0 / Gdτ[ix, iy, iz + 1] +
+            1.0 / Gdτ[ix + 1, iy, iz + 1] +
+            1.0 / Gdτ[ix, iy + 1, iz + 1] +
+            1.0 / Gdτ[ix + 1, iy + 1, iz + 1]
+        ) * 4.0
+    end
+    @inline function _harm_xzi_Gdτ(ix, iy, iz)
+        1.0 / (
+            1.0 / Gdτ[ix, iy + 1, iz] +
+            1.0 / Gdτ[ix + 1, iy + 1, iz] +
+            1.0 / Gdτ[ix, iy + 1, iz + 1] +
+            1.0 / Gdτ[ix + 1, iy + 1, iz + 1]
+        ) * 4.0
+    end
+    @inline function _harm_yzi_Gdτ(ix, iy, iz)
+        1.0 / (
+            1.0 / Gdτ[ix + 1, iy, iz] +
+            1.0 / Gdτ[ix + 1, iy + 1, iz] +
+            1.0 / Gdτ[ix + 1, iy, iz + 1] +
+            1.0 / Gdτ[ix + 1, iy + 1, iz + 1]
+        ) * 4.0
+    end
+    @inline function _harm_xyi_η(ix, iy, iz)
+        1.0 / (
+            1.0 / η[ix, iy, iz + 1] +
+            1.0 / η[ix + 1, iy, iz + 1] +
+            1.0 / η[ix, iy + 1, iz + 1] +
+            1.0 / η[ix + 1, iy + 1, iz + 1]
+        ) * 4.0
+    end
+    @inline function _harm_xzi_η(ix, iy, iz)
+        1.0 / (
+            1.0 / η[ix, iy + 1, iz] +
+            1.0 / η[ix + 1, iy + 1, iz] +
+            1.0 / η[ix, iy + 1, iz + 1] +
+            1.0 / η[ix + 1, iy + 1, iz + 1]
+        ) * 4.0
+    end
+    @inline function _harm_yzi_η(ix, iy, iz)
+        1.0 / (
+            1.0 / η[ix + 1, iy, iz] +
+            1.0 / η[ix + 1, iy + 1, iz] +
+            1.0 / η[ix + 1, iy, iz + 1] +
+            1.0 / η[ix + 1, iy + 1, iz + 1]
+        ) * 4.0
+    end
+    # ------------------------------------------------------
+
     # Compute pressure
     if (ix ≤ size(P, 1) && iy ≤ size(P, 2) && iz ≤ size(P, 3))
         P[ix, iy, iz] =
@@ -522,34 +581,34 @@ end
     if (ix ≤ size(τxx, 1) && iy ≤ size(τxx, 2) && iz ≤ size(τxx, 3))
         τxx[ix, iy, iz] =
             (
-                τxx[ix, iy, iz] / @inn_yz_Gdτ(ix, iy, iz) +
+                τxx[ix, iy, iz] / _inn_yz_Gdτ(ix, iy, iz) +
                 τxx_o[ix, iy, iz] / G / dt +
                 T(2) * (_dx * (Vx[ix + 1, iy + 1, iz + 1] - Vx[ix, iy + 1, iz + 1]))
-            ) / (one(T) / @inn_yz_Gdτ(ix, iy, iz) + one(T) / @inn_yz_η(ix, iy, iz))
+            ) / (one(T) / _inn_yz_Gdτ(ix, iy, iz) + one(T) / _inn_yz_η(ix, iy, iz))
     end
     # Compute τ_yy
     if (ix ≤ size(τyy, 1) && iy ≤ size(τyy, 2) && iz ≤ size(τyy, 3))
         τyy[ix, iy, iz] =
             (
-                τyy[ix, iy, iz] / @inn_xz_Gdτ(ix, iy, iz) +
+                τyy[ix, iy, iz] / _inn_xz_Gdτ(ix, iy, iz) +
                 τyy_o[ix, iy, iz] / G / dt +
                 T(2) * (_dy * (Vy[ix + 1, iy + 1, iz + 1] - Vy[ix + 1, iy, iz + 1]))
-            ) / (one(T) / @inn_xz_Gdτ(ix, iy, iz) + one(T) / @inn_xz_η(ix, iy, iz))
+            ) / (one(T) / _inn_xz_Gdτ(ix, iy, iz) + one(T) / _inn_xz_η(ix, iy, iz))
     end
     # Compute τ_zz
     if (ix ≤ size(τzz, 1) && iy ≤ size(τzz, 2) && iz ≤ size(τzz, 3))
         τzz[ix, iy, iz] =
             (
-                τzz[ix, iy, iz] / @inn_xy_Gdτ(ix, iy, iz) +
+                τzz[ix, iy, iz] / _inn_xy_Gdτ(ix, iy, iz) +
                 τzz_o[ix, iy, iz] / G / dt +
                 T(2) * (_dz * (Vz[ix + 1, iy + 1, iz + 1] - Vz[ix + 1, iy + 1, iz]))
-            ) / (one(T) / @inn_xy_Gdτ(ix, iy, iz) + one(T) / @inn_xy_η(ix, iy, iz))
+            ) / (one(T) / _inn_xy_Gdτ(ix, iy, iz) + one(T) / _inn_xy_η(ix, iy, iz))
     end
     # Compute τ_xy
     if (ix ≤ size(τxy, 1) && iy ≤ size(τxy, 2) && iz ≤ size(τxy, 3))
         τxy[ix, iy, iz] =
             (
-                τxy[ix, iy, iz] / @harm_xyi_Gdτ(ix, iy, iz) +
+                τxy[ix, iy, iz] / _harm_xyi_Gdτ(ix, iy, iz) +
                 τxy_o[ix, iy, iz] / G / dt +
                 T(2) * (
                     0.5 * (
@@ -557,13 +616,13 @@ end
                         _dx * (Vy[ix + 1, iy + 1, iz + 1] - Vy[ix, iy + 1, iz + 1])
                     )
                 )
-            ) / (one(T) / @harm_xyi_Gdτ(ix, iy, iz) + one(T) / @harm_xyi_η(ix, iy, iz))
+            ) / (one(T) / _harm_xyi_Gdτ(ix, iy, iz) + one(T) / _harm_xyi_η(ix, iy, iz))
     end
     # Compute τ_xz
     if (ix ≤ size(τxz, 1) && iy ≤ size(τxz, 2) && iz ≤ size(τxz, 3))
         τxz[ix, iy, iz] =
             (
-                τxz[ix, iy, iz] / @harm_xzi_Gdτ(ix, iy, iz) +
+                τxz[ix, iy, iz] / _harm_xzi_Gdτ(ix, iy, iz) +
                 τxz_o[ix, iy, iz] / G / dt +
                 T(2) * (
                     0.5 * (
@@ -571,13 +630,13 @@ end
                         _dx * (Vz[ix + 1, iy + 1, iz + 1] - Vz[ix, iy + 1, iz + 1])
                     )
                 )
-            ) / (one(T) / @harm_xzi_Gdτ(ix, iy, iz) + one(T) / @harm_xzi_η(ix, iy, iz))
+            ) / (one(T) / _harm_xzi_Gdτ(ix, iy, iz) + one(T) / _harm_xzi_η(ix, iy, iz))
     end
     # Compute τ_yz
     if (ix ≤ size(τyz, 1) && iy ≤ size(τyz, 2) && iz ≤ size(τyz, 3))
         τyz[ix, iy, iz] =
             (
-                τyz[ix, iy, iz] / @harm_yzi_Gdτ(ix, iy, iz) +
+                τyz[ix, iy, iz] / _harm_yzi_Gdτ(ix, iy, iz) +
                 τyz_o[ix, iy, iz] / G / dt +
                 T(2) * (
                     0.5 * (
@@ -585,83 +644,38 @@ end
                         _dy * (Vz[ix + 1, iy + 1, iz + 1] - Vz[ix + 1, iy, iz + 1])
                     )
                 )
-            ) / (one(T) / @harm_yzi_Gdτ(ix, iy, iz) + one(T) / @harm_yzi_η(ix, iy, iz))
+            ) / (one(T) / _harm_yzi_Gdτ(ix, iy, iz) + one(T) / _harm_yzi_η(ix, iy, iz))
     end
     return nothing
 end
 
-macro av_xi_dτ_Rho(ix, iy, iz)
-    return esc(:((dτ_Rho[$ix, $iy + 1, $iz + 1] + dτ_Rho[$ix + 1, $iy + 1, $iz + 1]) * 0.5))
-end
-macro av_yi_dτ_Rho(ix, iy, iz)
-    return esc(:((dτ_Rho[$ix + 1, $iy, $iz + 1] + dτ_Rho[$ix + 1, $iy + 1, $iz + 1]) * 0.5))
-end
-macro av_zi_dτ_Rho(ix, iy, iz)
-    return esc(:((dτ_Rho[$ix + 1, $iy + 1, $iz] + dτ_Rho[$ix + 1, $iy + 1, $iz + 1]) * 0.5))
-end
-macro av_xi_ρg(ix, iy, iz)
-    return esc(:((fx[$ix, $iy + 1, $iz + 1] + fx[$ix + 1, $iy + 1, $iz + 1]) * 0.5))
-end
-macro av_yi_ρg(ix, iy, iz)
-    return esc(:((fy[$ix + 1, $iy, $iz + 1] + fy[$ix + 1, $iy + 1, $iz + 1]) * 0.5))
-end
-macro av_zi_ρg(ix, iy, iz)
-    return esc(:((fz[$ix + 1, $iy + 1, $iz] + fz[$ix + 1, $iy + 1, $iz + 1]) * 0.5))
-end
+# macro av_xi_dτ_Rho(ix, iy, iz)
+#     return esc(:((dτ_Rho[$ix, $iy + 1, $iz + 1] + dτ_Rho[$ix + 1, $iy + 1, $iz + 1]) * 0.5))
+# end
+# macro av_yi_dτ_Rho(ix, iy, iz)
+#     return esc(:((dτ_Rho[$ix + 1, $iy, $iz + 1] + dτ_Rho[$ix + 1, $iy + 1, $iz + 1]) * 0.5))
+# end
+# macro av_zi_dτ_Rho(ix, iy, iz)
+#     return esc(:((dτ_Rho[$ix + 1, $iy + 1, $iz] + dτ_Rho[$ix + 1, $iy + 1, $iz + 1]) * 0.5))
+# end
+# macro av_xi_ρg(ix, iy, iz)
+#     return esc(:((fx[$ix, $iy + 1, $iz + 1] + fx[$ix + 1, $iy + 1, $iz + 1]) * 0.5))
+# end
+# macro av_yi_ρg(ix, iy, iz)
+#     return esc(:((fy[$ix + 1, $iy, $iz + 1] + fy[$ix + 1, $iy + 1, $iz + 1]) * 0.5))
+# end
+# macro av_zi_ρg(ix, iy, iz)
+#     return esc(:((fz[$ix + 1, $iy + 1, $iz] + fz[$ix + 1, $iy + 1, $iz + 1]) * 0.5))
+# end
 
-macro harm_xi_dτ_Rho(ix, iy, iz)
-    return esc(
-        :(
-            1.0 / (
-                1.0 / dτ_Rho[$ix, $iy + 1, $iz + 1] +
-                1.0 / dτ_Rho[$ix + 1, $iy + 1, $iz + 1]
-            ) * 2.0
-        ),
-    )
+@inline function harm_xi_ρg(fx, ix, iy, iz)
+    @inbounds 1.0 / (1.0 / fx[ix, iy + 1, iz + 1] + 1.0 / fx[ix + 1, iy + 1, iz + 1]) * 2.0
 end
-macro harm_yi_dτ_Rho(ix, iy, iz)
-    return esc(
-        :(
-            1.0 / (
-                1.0 / dτ_Rho[$ix + 1, $iy, $iz + 1] +
-                1.0 / dτ_Rho[$ix + 1, $iy + 1, $iz + 1]
-            ) * 2.0
-        ),
-    )
+@inline function harm_yi_ρg(fy, ix, iy, iz)
+    @inbounds 1.0 / (1.0 / fy[ix + 1, iy, iz + 1] + 1.0 / fy[ix + 1, iy + 1, iz + 1]) * 2.0
 end
-macro harm_zi_dτ_Rho(ix, iy, iz)
-    return esc(
-        :(
-            1.0 / (
-                1.0 / dτ_Rho[$ix + 1, $iy + 1, $iz] +
-                1.0 / dτ_Rho[$ix + 1, $iy + 1, $iz + 1]
-            ) * 2.0
-        ),
-    )
-end
-macro harm_xi_ρg(ix, iy, iz)
-    return esc(
-        :(
-            1.0 / (1.0 / fx[$ix, $iy + 1, $iz + 1] + 1.0 / fx[$ix + 1, $iy + 1, $iz + 1]) *
-            2.0
-        ),
-    )
-end
-macro harm_yi_ρg(ix, iy, iz)
-    return esc(
-        :(
-            1.0 / (1.0 / fy[$ix + 1, $iy, $iz + 1] + 1.0 / fy[$ix + 1, $iy + 1, $iz + 1]) *
-            2.0
-        ),
-    )
-end
-macro harm_zi_ρg(ix, iy, iz)
-    return esc(
-        :(
-            1.0 / (1.0 / fz[$ix + 1, $iy + 1, $iz] + 1.0 / fz[$ix + 1, $iy + 1, $iz + 1]) *
-            2.0
-        ),
-    )
+@inline function harm_zi_ρg(fz, ix, iy, iz)
+    @inbounds 1.0 / (1.0 / fz[ix + 1, iy + 1, iz] + 1.0 / fz[ix + 1, iy + 1, iz + 1]) * 2.0
 end
 
 @parallel_indices (ix, iy, iz) function compute_V!(
@@ -689,6 +703,29 @@ end
     nz_1::N,
     nz_2::N,
 ) where {T,N}
+
+    # closures ---------------------------------------------
+    _harm_xi_ρg = (ix, iy, iz) -> harm_xi_ρg(fx, ix, iy, iz)
+    _harm_yi_ρg = (ix, iy, iz) -> harm_yi_ρg(fy, ix, iy, iz)
+    _harm_zi_ρg = (ix, iy, iz) -> harm_zi_ρg(fz, ix, iy, iz)
+
+    function _harm_xi_dτ_Rho(ix, iy, iz)
+        1.0 / (1.0 / dτ_Rho[ix, iy + 1, iz + 1] +
+               1.0 / dτ_Rho[ix + 1, iy + 1, iz + 1]
+        ) * 2.0
+    end
+    function _harm_yi_dτ_Rho(ix, iy, iz)
+        1.0 / (1.0 / dτ_Rho[ix + 1, iy, iz + 1] +
+               1.0 / dτ_Rho[ix + 1, iy + 1, iz + 1]
+        ) * 2.0
+    end
+    function _harm_zi_dτ_Rho(ix, iy, iz)
+        1.0 / (1.0 / dτ_Rho[ix + 1, iy + 1, iz] +
+               1.0 / dτ_Rho[ix + 1, iy + 1, iz + 1]
+        ) * 2.0
+    end
+    # ------------------------------------------------------
+
     if (ix ≤ nx_1) && (iy ≤ ny_2) && (iz ≤ nz_2)
         Vx[ix + 1, iy + 1, iz + 1] =
             Vx[ix + 1, iy + 1, iz + 1] +
@@ -697,8 +734,8 @@ end
                 _dy * (τxy[ix, iy + 1, iz] - τxy[ix, iy, iz]) +
                 _dz * (τxz[ix, iy, iz + 1] - τxz[ix, iy, iz]) -
                 _dx * (P[ix + 1, iy + 1, iz + 1] - P[ix, iy + 1, iz + 1]) +
-                @harm_xi_ρg(ix, iy, iz)
-            ) * @harm_xi_dτ_Rho(ix, iy, iz)
+                _harm_xi_ρg(ix, iy, iz)
+            ) * _harm_xi_dτ_Rho(ix, iy, iz)
     end
     if (ix ≤ nx_2) && (iy ≤ ny_1) && (iz ≤ nz_2)
         Vy[ix + 1, iy + 1, iz + 1] =
@@ -708,8 +745,8 @@ end
                 _dx * (τxy[ix + 1, iy, iz] - τxy[ix, iy, iz]) +
                 _dz * (τyz[ix, iy, iz + 1] - τyz[ix, iy, iz]) -
                 _dy * (P[ix + 1, iy + 1, iz + 1] - P[ix + 1, iy, iz + 1]) +
-                @harm_yi_ρg(ix, iy, iz)
-            ) * @harm_yi_dτ_Rho(ix, iy, iz)
+                _harm_yi_ρg(ix, iy, iz)
+            ) * _harm_yi_dτ_Rho(ix, iy, iz)
     end
     if (ix ≤ nx_2) && (iy ≤ ny_2) && (iz ≤ nz_1)
         Vz[ix + 1, iy + 1, iz + 1] =
@@ -719,46 +756,21 @@ end
                 _dx * (τxz[ix + 1, iy, iz] - τxz[ix, iy, iz]) +
                 _dy * (τyz[ix, iy + 1, iz] - τyz[ix, iy, iz]) -
                 _dz * (P[ix + 1, iy + 1, iz + 1] - P[ix + 1, iy + 1, iz]) +
-                @harm_zi_ρg(ix, iy, iz)
-            ) * @harm_zi_dτ_Rho(ix, iy, iz)
+                _harm_zi_ρg(ix, iy, iz)
+            ) * _harm_zi_dτ_Rho(ix, iy, iz)
     end
 
     return nothing
 end
 
-macro av_xi_ρg(ix, iy, iz)
-    return esc(:((fx[$ix, $iy + 1, $iz + 1] + fx[$ix + 1, $iy + 1, $iz + 1]) * 0.5))
+@inline function harm_xi_ρg(fx, ix, iy, iz)
+    @inbounds 1.0 / (1.0 / fx[ix, iy + 1, iz + 1] + 1.0 / fx[ix + 1, iy + 1, iz + 1]) * 2.0
 end
-macro av_yi_ρg(ix, iy, iz)
-    return esc(:((fy[$ix + 1, $iy, $iz + 1] + fy[$ix + 1, $iy + 1, $iz + 1]) * 0.5))
+@inline function harm_yi_ρg(fy, ix, iy, iz)
+    @inbounds 1.0 / (1.0 / fy[ix + 1, iy, iz + 1] + 1.0 / fy[ix + 1, iy + 1, iz + 1]) * 2.0
 end
-macro av_zi_ρg(ix, iy, iz)
-    return esc(:((fz[$ix + 1, $iy + 1, $iz] + fz[$ix + 1, $iy + 1, $iz + 1]) * 0.5))
-end
-
-macro harm_xi_ρg(ix, iy, iz)
-    return esc(
-        :(
-            1.0 / (1.0 / fx[$ix, $iy + 1, $iz + 1] + 1.0 / fx[$ix + 1, $iy + 1, $iz + 1]) *
-            2.0
-        ),
-    )
-end
-macro harm_yi_ρg(ix, iy, iz)
-    return esc(
-        :(
-            1.0 / (1.0 / fy[$ix + 1, $iy, $iz + 1] + 1.0 / fy[$ix + 1, $iy + 1, $iz + 1]) *
-            2.0
-        ),
-    )
-end
-macro harm_zi_ρg(ix, iy, iz)
-    return esc(
-        :(
-            1.0 / (1.0 / fz[$ix + 1, $iy + 1, $iz] + 1.0 / fz[$ix + 1, $iy + 1, $iz + 1]) *
-            2.0
-        ),
-    )
+@inline function harm_zi_ρg(fz, ix, iy, iz)
+    @inbounds 1.0 / (1.0 / fz[ix + 1, iy + 1, iz] + 1.0 / fz[ix + 1, iy + 1, iz + 1]) * 2.0
 end
 
 @parallel_indices (ix, iy, iz) function compute_Res!(
@@ -783,6 +795,13 @@ end
     _dy::T,
     _dz::T,
 ) where {T}
+
+    # closures ---------------------------------------------
+    _harm_xi_ρg = (ix, iy, iz) -> harm_xi_ρg(fx, ix, iy, iz)
+    _harm_yi_ρg = (ix, iy, iz) -> harm_yi_ρg(fy, ix, iy, iz)
+    _harm_zi_ρg = (ix, iy, iz) -> harm_zi_ρg(fz, ix, iy, iz)
+    # ------------------------------------------------------
+
     if (ix ≤ size(∇V, 1)) && (iy ≤ size(∇V, 2)) && (iz ≤ size(∇V, 3))
         ∇V[ix, iy, iz] =
             _dx * (Vx[ix + 1, iy, iz] - Vx[ix, iy, iz]) +
@@ -795,7 +814,7 @@ end
             _dy * (τxy[ix, iy + 1, iz] - τxy[ix, iy, iz]) +
             _dz * (τxz[ix, iy, iz + 1] - τxz[ix, iy, iz]) -
             _dx * (P[ix + 1, iy + 1, iz + 1] - P[ix, iy + 1, iz + 1]) +
-            @harm_xi_ρg(ix, iy, iz)
+            _harm_xi_ρg(ix, iy, iz)
     end
     if (ix ≤ size(Ry, 1)) && (iy ≤ size(Ry, 2)) && (iz ≤ size(Ry, 3))
         Ry[ix, iy, iz] =
@@ -803,7 +822,7 @@ end
             _dx * (τxy[ix + 1, iy, iz] - τxy[ix, iy, iz]) +
             _dz * (τyz[ix, iy, iz + 1] - τyz[ix, iy, iz]) -
             _dy * (P[ix + 1, iy + 1, iz + 1] - P[ix + 1, iy, iz + 1]) +
-            @harm_yi_ρg(ix, iy, iz)
+            _harm_yi_ρg(ix, iy, iz)
     end
     if (ix ≤ size(Rz, 1)) && (iy ≤ size(Rz, 2)) && (iz ≤ size(Rz, 3))
         Rz[ix, iy, iz] =
@@ -811,7 +830,7 @@ end
             _dx * (τxz[ix + 1, iy, iz] - τxz[ix, iy, iz]) +
             _dy * (τyz[ix, iy + 1, iz] - τyz[ix, iy, iz]) -
             _dz * (P[ix + 1, iy + 1, iz + 1] - P[ix + 1, iy + 1, iz]) +
-            @harm_zi_ρg(ix, iy, iz)
+            _harm_zi_ρg(ix, iy, iz)
     end
 
     return nothing
@@ -831,7 +850,7 @@ function JustRelax.pureshear_bc!(
         -εbg * ((ix - 1) * dx - 0.5 * lx) for ix in 1:size(Vx, 1), iy in 1:size(Vx, 2),
         iz in 1:size(Vx, 3)
     ])
-    return stokes.V.Vz .= PTArray([
+    stokes.V.Vz .= PTArray([
         εbg * ((iz - 1) * dz - 0.5 * lz) for ix in 1:size(Vz, 1), iy in 1:size(Vz, 2),
         iz in 1:size(Vz, 3)
     ])

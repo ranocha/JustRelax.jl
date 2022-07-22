@@ -1,14 +1,14 @@
 ENV["PS_PACKAGE"] = :Threads
 
-using JustRelax
+using JustRelax 
 using Printf, LinearAlgebra
 
 # setup ParallelStencil.jl environment
 model = PS_Setup(:cpu, Float64, 2)
-environment!(model)
+environment!(model) 
 
-include("C:\\Users\\albert\\Desktop\\JustPIC.jl\\src\\JustPIC.jl")
-using .JustPIC
+# include("/home/albert/Desktop/JustPIC.jl/src/JustPIC.jl")
+using JustPIC
 
 @parallel_indices (i, j) function init_T!(T, ΔT, w, ix, iy, dx, dy, lx, ly)
     T[i] = ΔT*exp(-(((ix[i]-1)*dx-0.5*lx)/w)^2 -(((iy[j]-1)*dy-0.5*ly)/w)^2) 
@@ -31,6 +31,63 @@ end
 @parallel function add_dTdt(T, ΔT)
     @inn(T) = @inn(T) + @inn(ΔT)
     return nothing
+end
+
+function twoxtwo_particles2D(nxcell, max_xcell, x, y, dx, dy, nx, ny)
+    ncells = nx * ny
+    np = max_xcell * ncells
+    dx_2 = dx * 0.5
+    dy_2 = dy * 0.5
+    px, py = ntuple(_ -> fill(NaN, max_xcell, nx, ny), Val(2))
+    min_xcell = ceil(Int, nxcell / 2)
+    min_xcell = 4
+
+    # index = zeros(UInt32, np)
+    inject = falses(nx, ny)
+    index = falses(max_xcell, nx, ny)
+    idx = 1
+    @inbounds for j in 1:ny, i in 1:nx
+        # center of the cell
+        x0, y0 = x[i], y[j]
+        # index of first particle in cell
+        # add 4 new particles in a 2x2 manner + some small random perturbation
+        px[idx, i, j] = x0 - 0.25 * dx_2 # * (1.0 + 0.15*(rand() - 0.5))
+        px[idx + 1, i, j] = x0 + 0.25 * dx_2 # * (1.0 + 0.15*(rand() - 0.5))
+        px[idx + 2, i, j] = x0 - 0.25 * dx_2 # * (1.0 + 0.15*(rand() - 0.5))
+        px[idx + 3, i, j] = x0 + 0.25 * dx_2 # * (1.0 + 0.15*(rand() - 0.5))
+        py[idx, i, j] = y0 - 0.25 * dy_2 # * (1.0 + 0.15*(rand() - 0.5))
+        py[idx + 1, i, j] = y0 - 0.25 * dy_2 # * (1.0 + 0.15*(rand() - 0.5))
+        py[idx + 2, i, j] = y0 + 0.25 * dy_2 # * (1.0 + 0.15*(rand() - 0.5))
+        py[idx + 3, i, j] = y0 + 0.25 * dy_2 # * (1.0 + 0.15*(rand() - 0.5))
+        # fill index array
+        for l in 1:nxcell
+            # px[l, i, j] = x0 + dx/3*(1.0 + (rand() - 0.5))
+            # py[l, i, j] = y0 + dy/3*(1.0 + (rand() - 0.5))
+            index[l, i, j] = true
+        end
+    end
+
+    # if PS_PACKAGE === :CUDA
+    #     pxi = CuArray.((px, py))
+    #     return Particles(
+    #         pxi, CuArray(index), CuArray(inject), nxcell, max_xcell, min_xcell, np, (nx, ny)
+    #     )
+
+    # else
+    return Particles(
+            (px, py), index, inject, nxcell, max_xcell, min_xcell, np, (nx, ny)
+        )
+    # end
+end
+
+function velocity_grids(xvi::NTuple{2, T}, di) where {T}
+    dx, dy = di
+    yvx = xvi[2][1]-dy/2:dy:xvi[2][end]+dy/2
+    xvy = xvi[1][1]-dx/2:dx:xvi[1][end]+dx/2
+    grid_vx = (xvi[1], yvx)
+    grid_vy = (xvy, xvi[2])
+
+    return grid_vx, grid_vy
 end
         
 nx=287
@@ -63,7 +120,7 @@ function thermal_convection2D(; nx=64, ny=64, lx=3e0, ly=1e0)
     dη_dT     = 1e-10/ΔT           # viscosity's temperature dependence
     dt_diff   = 1.0/4.1*min(di...)^2/κ      # diffusive CFL timestep limiter
     dt        = dt_diff # physical time step
-
+    
     # Thermal diffusion ----------------------------------
     # general thermal arrays
     thermal = ThermalArrays(ni)
@@ -105,12 +162,15 @@ function thermal_convection2D(; nx=64, ny=64, lx=3e0, ly=1e0)
     # ----------------------------------------------------
 
     # Initialize particles -------------------------------
-    nxcell = 4 # initial number of particles per cell
-    max_xcell = 8 # max number of particles per cell
-    min_xcell = 2 # min number of particles per cell
-    particles = init_particles(nxcell, max_xcell, min_xcell, xvi..., di..., ni...)
+    nxcell, max_xcell = 4, 6
+    particles = twoxtwo_particles2D(nxcell, max_xcell, xci[1], xci[2], di[1], di[1], nx-1, ny-1)
+    # velocity grids
+    grid_vx, grid_vy = velocity_grids(xvi, di)
+    # temperature
     pT = similar(particles.coords[1])
-    grid2particle!(pT, xvi, thermal.T, particles.coords)
+    grid2particle_xvertex!(pT, xvi, thermal.T,  particles.coords)
+
+    # gathering_xvertex!(thermal.T, pT, xvi, particles.coords)
     particle_args = (pT,)
     # ----------------------------------------------------
 
@@ -120,7 +180,7 @@ function thermal_convection2D(; nx=64, ny=64, lx=3e0, ly=1e0)
     nt = 10
     local iters
     while it < nt
-        # Stokes solver
+        # Stokes solver ---------------
         iters = solve!(
             stokes, 
             pt_stokes, 
@@ -134,9 +194,10 @@ function thermal_convection2D(; nx=64, ny=64, lx=3e0, ly=1e0)
         )
 
         dt = compute_dt(stokes, di, dt_diff)
+        # ------------------------------
+        
+        # Thermal solver ---------------
         pt_thermal = PTThermalCoeffs(K, ρCp, dt, di, li; ϵ = 1e-4, CFL= 0.1 / √2)
-
-        # Thermal solver
         iters = solve!(
             thermal,
             pt_thermal,
@@ -149,22 +210,25 @@ function thermal_convection2D(; nx=64, ny=64, lx=3e0, ly=1e0)
             nout=10,
             verbose=false,
         )
+        # ------------------------------
 
-        # Particles advection
-        grid2particle!(pT, xci, thermal.ΔT, particles.coords)
-
+        # Advection --------------------
+        # interpolate fields from grid vertices to particles
+        grid2particle_xvertex!(pT, xvi, thermal.ΔT,  particles.coords)
         # advect particles in space
-        advection_RK2!(particles, (stokes.V.Vx, stokes.V.Vy), xvi, di, dt, 0.5)
-
+        V = (stokes.V.Vx, stokes.V.Vy)
+        advection_RK2_edges!(particles, V, grid_vx, grid_vy, dt, 2/3) 
         # advect particles in memory
-        shuffle_particles!(particles, xvi, di, ni, particle_args)
-
-        particle2grid!(thermal.ΔT, pT, xvi, particles)
-        
+        shuffle_particles_vertex!(particles, xvi, particle_args)
+        # interpolate fields from particle to grid vertices
+        gathering_xvertex!(thermal.ΔT, pT, xvi,  particles.coords)
+        # check if we need to inject particles
+        check_injection(particles) && inject_particles!(particles, args, (thermal.ΔT,), grid)
+        # update Temperature field
         @parallel add_dTdt(thermal.T, thermal.ΔT)
-        
-        check_injection(particles.inject) && inject_particles!(particles, xci, ni, di)
-         
+    
+        # ------------------------------
+
         # Update viscosity
         @parallel viscosity!(η, thermal.T, ΔT, dη_dT)
         thermal.T[:,1  ] .=  ΔT/2.0
