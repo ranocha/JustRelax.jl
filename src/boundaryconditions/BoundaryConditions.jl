@@ -16,8 +16,18 @@ function pureshear_bc!(
     ])
 end
 
+# Free slip boundary conditions
+
+function apply_free_slip!(freeslip::NamedTuple{<:Any,NTuple{2,T}}, Vx, Vy) where {T}
+    freeslip_x, freeslip_y = freeslip
+    # apply boundary conditions
+    freeslip_x && (@parallel (1:size(Vy, 2)) free_slip_x!(Vy))
+    freeslip_y && (@parallel (1:size(Vx, 1)) free_slip_y!(Vx))
+
+    return nothing
+end
+
 @parallel_indices (iy) function free_slip_x!(A::AbstractArray{eltype(PTArray),2})
-    <
     A[1, iy] = A[2, iy]
     A[end, iy] = A[end - 1, iy]
     return nothing
@@ -29,25 +39,13 @@ end
     return nothing
 end
 
-function apply_free_slip!(freeslip::NamedTuple{<:Any,NTuple{2,T}}, Vx, Vy) where {T}
-    freeslip_x, freeslip_y = freeslip
-    # free slip boundary conditions
-    freeslip_x && (@parallel (1:size(Vy, 2)) free_slip_x!(Vy))
-
-    freeslip_y && (@parallel (1:size(Vx, 1)) free_slip_y!(Vx))
-
-    return nothing
-end
-
 function thermal_boundary_conditions!(
     insulation::NamedTuple, T::AbstractArray{_T,2}
 ) where {_T}
     insulation_x, insulation_y = insulation
-
     nx, ny = size(T)
 
     insulation_x && (@parallel (1:ny) free_slip_x!(T))
-
     insulation_y && (@parallel (1:nx) free_slip_y!(T))
 
     return nothing

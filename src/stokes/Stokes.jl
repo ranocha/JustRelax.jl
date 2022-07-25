@@ -74,8 +74,8 @@ end
     @all(τxx) = (@all(τxx) + 2.0 * @all(Gdτ) * @d_xa(Vx) / dx) / (@all(Gdτ) / @all(η) + 1.0)
     @all(τyy) = (@all(τyy) + 2.0 * @all(Gdτ) * @d_ya(Vy) / dy) / (@all(Gdτ) / @all(η) + 1.0)
     @all(τxy) =
-        (@all(τxy) + 2.0 * @harm(Gdτ) * (0.5 * (@d_yi(Vx) / dy + @d_xi(Vy) / dx))) /
-        (@harm(Gdτ) / @harm(η) + 1.0)
+        (@all(τxy) + 2.0 * @av(Gdτ) * (0.5 * (@d_yi(Vx) / dy + @d_xi(Vy) / dx))) /
+        (@av(Gdτ) / @harm(η) + 1.0)
     return nothing
 end
 
@@ -95,8 +95,8 @@ end
 ) where {T}
     @all(Rx) = @d_xi(τxx) / dx + @d_ya(τxy) / dy - @d_xi(P) / dx
     @all(Ry) = @d_yi(τyy) / dy + @d_xa(τxy) / dx - @d_yi(P) / dy
-    @all(dVx) = @harm_xi(dτ_Rho) * @all(Rx)
-    @all(dVy) = @harm_yi(dτ_Rho) * @all(Ry)
+    @all(dVx) = @av_xi(dτ_Rho) * @all(Rx)
+    @all(dVy) = @av_yi(dτ_Rho) * @all(Ry)
     return nothing
 end
 
@@ -115,9 +115,9 @@ end
     dy::T,
 ) where {T}
     @all(Rx) = @d_xi(τxx) / dx + @d_ya(τxy) / dy - @d_xi(P) / dx
-    @all(Ry) = @d_yi(τyy) / dy + @d_xa(τxy) / dx - @d_yi(P) / dy - @harm_yi(ρg)
-    @all(dVx) = @harm_xi(dτ_Rho) * @all(Rx)
-    @all(dVy) = @harm_yi(dτ_Rho) * @all(Ry)
+    @all(Ry) = @d_yi(τyy) / dy + @d_xa(τxy) / dx - @d_yi(P) / dy - @av_yi(ρg)
+    @all(dVx) = @av_xi(dτ_Rho) * @all(Rx)
+    @all(dVy) = @av_yi(dτ_Rho) * @all(Ry)
     return nothing
 end
 
@@ -177,13 +177,12 @@ function solve!(
 
     # solver loop
     wtime0 = 0.0
-    while err > ϵ && iter <= iterMax
+    while err > ϵ && iter ≤ iterMax
         wtime0 += @elapsed begin
             @parallel compute_P!(∇V, P, Vx, Vy, Gdτ, r, dx, dy)
             @parallel compute_τ!(τxx, τyy, τxy, Vx, Vy, η, Gdτ, dx, dy)
             @parallel compute_dV!(Rx, Ry, dVx, dVy, P, τxx, τyy, τxy, dτ_Rho, ρg, dx, dy)
             @parallel compute_V!(Vx, Vy, dVx, dVy)
-
             # free slip boundary conditions
             apply_free_slip!(freeslip, Vx, Vy)
         end

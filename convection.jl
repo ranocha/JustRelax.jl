@@ -53,7 +53,7 @@ function twoxtwo_particles2D(nxcell, max_xcell, x, y, dx, dy, nx, ny)
     inject = falses(nx, ny)
     index = falses(max_xcell, nx, ny)
     idx = 1
-    @inbounds for j in 1:ny-1, i in 1:nx-1
+    @inbounds for j in 1:ny, i in 1:nx
         # center of the cell
         x0, y0 = x[i], y[j]
         # index of first particle in cell
@@ -132,7 +132,7 @@ function thermal_convection2D(; nx=64, ny=64, lx=3e0, ly=1e0)
     dη_dT     = 1e-10/ΔT           # viscosity's temperature dependence
     dt_diff   = 1.0/4.1*min(di...)^2/κ      # diffusive CFL timestep limiter
     dt        = dt_diff # physical time step
-    
+
     # Thermal diffusion ----------------------------------
     # general thermal arrays
     thermal = ThermalArrays(ni)
@@ -145,7 +145,7 @@ function thermal_convection2D(; nx=64, ny=64, lx=3e0, ly=1e0)
     K = ρCp.*κ
     thermal_parameters = ThermalParameters(K, ρCp)
 
-    pt_thermal = PTThermalCoeffs(K, ρCp, dt, di, li, CFL= 0.1 / √2)
+    pt_thermal = PTThermalCoeffs(K, ρCp, dt, di, li, CFL= 0.9 / √2)
     thermal_bc = (flux_x=true, flux_y=false)
 
     # @parallel (1:nx, 1:ny) init_T!(thermal.T, ΔT, w, 1:nx, 1:ny, di..., lx, ly)
@@ -189,9 +189,10 @@ function thermal_convection2D(; nx=64, ny=64, lx=3e0, ly=1e0)
     # Physical time loop
     t = 0.0
     it = 0
-    nt = 100
+    nt = 10
     local iters
-    while it < nt
+    # while it ≤ 100
+    for it in 1:10
         
         # Stokes solver ---------------
         iters = solve!(
@@ -203,49 +204,53 @@ function thermal_convection2D(; nx=64, ny=64, lx=3e0, ly=1e0)
             freeslip, 
             fy, 
             η; 
-            iterMax=10_000
+            iterMax=10e3
         )
 
-        dt = compute_dt(stokes, di, dt_diff)
+        @show dt = compute_dt(stokes, di, dt_diff)
         # ------------------------------
         
-        # Thermal solver ---------------
-        pt_thermal = PTThermalCoeffs(K, ρCp, dt, di, li; ϵ = 1e-4, CFL= 0.1 / √2)
-        iters = solve!(
-            thermal,
-            pt_thermal,
-            thermal_parameters,
-            thermal_bc,
-            ni,
-            di,
-            dt;
-            iterMax=10_000,
-            nout=10,
-            verbose=false,
-        )
-        # ------------------------------
+        # # Thermal solver ---------------
+        # pt_thermal = PTThermalCoeffs(K, ρCp, dt, di, li; ϵ = 1e-4, CFL= 0.1 / √2)
+        # iters = solve!(
+        #     thermal,
+        #     pt_thermal,
+        #     thermal_parameters,
+        #     thermal_bc,
+        #     ni,
+        #     di,
+        #     dt;
+        #     iterMax=10e3,
+        #     nout=10,
+        #     verbose=false,
+        # )
+        # # ------------------------------
 
         # Advection --------------------
         # interpolate fields from grid vertices to particles
-        grid2particle_xvertex!(pT, xvi, thermal.ΔT,  particles.coords)
+        grid2particle_xvertex!(pT, xvi, thermal.T,  particles.coords)
         # advect particles in space
         V = (stokes.V.Vx, stokes.V.Vy)
         advection_RK2_edges!(particles, V, grid_vx, grid_vy, dt, 2/3) 
+        @assert !any(particles.coords[2] .> 0.5)
         # advect particles in memory
         shuffle_particles_vertex!(particles, xvi, particle_args)
         # check if we need to inject particles
-        check_injection(particles) && inject_particles!(particles, particle_args, (thermal.ΔT,), xvi)
-        # interpolate fields from particle to grid vertices
-        gathering_xvertex!(thermal.ΔT, pT, xvi,  particles.coords)
-        # update Temperature field
-        @assert !any(isnan, thermal.T)
-        @assert !any(isnan, thermal.ΔT)
+        @show inject = check_injection(particles)
+        # inject && inject_particles!(particles, particle_args, (thermal.T,), xvi)
+        @assert !any(particles.coords[2] .> 0.5)
 
-        @parallel add_dTdt(thermal.T, thermal.ΔT)
+        # interpolate fields from particle to grid vertices
+        gathering_xvertex!(thermal.T, pT, xvi,  particles.coords)
+        # update Temperature field
+        # @assert !any(isnan, thermal.T)
+        # @assert !any(isnan, thermal.ΔT)
+
+        # @parallel add_dTdt(thermal.T, thermal.ΔT)
         # ------------------------------
 
-        @assert !any(isnan, thermal.T)
-        @assert !any(isnan, thermal.ΔT)
+        # @assert !any(isnan, thermal.T)
+        # @assert !any(isnan, thermal.ΔT)
 
         # Update viscosity
         @parallel viscosity!(η, thermal.T, ΔT, dη_dT)
@@ -256,32 +261,29 @@ function thermal_convection2D(; nx=64, ny=64, lx=3e0, ly=1e0)
         # Update buoyancy
         @parallel update_buoyancy!(fy, thermal.T, ρ0gα)
 
-        @show it += 1
+        # @show it += 1
         t += dt
 
         # @show extrema(stokes.V.Vy)
-        # heatmap(xvi[1], xvi[2], thermal.T , colormap=:vik, colorrange=(-0.5, 0.5))
+        heatmap(xvi[1], xvi[2], stokes.V.Vy , colormap=:vik)
+        # heatmap(xvi[1], xvi[2], stokes.V.Vy , colormap=:vik, colorrange=(-0.5, 0.5))
 
     end
 
     return (ni=ni, xci=xci, li=li, di=di), thermal, iters
 end
 
-X = [x for x in xvi[1], y in xvi[2]][:]
-Y = [y for x in xvi[1], y in xvi[2]][:]
+# X = [x for x in xvi[1], y in xvi[2]][:]
+# Y = [y for x in xvi[1], y in xvi[2]][:]
+# # # vx = stokes.V.Vx[1:end-1,:][:]
+# # # vy = stokes.V.Vy[:,1:end-1][:]
 
+# # # c=1e-4
+# # # arrows(X,Y,vx*c,vy*c)
 
-# @inline function isemptycell(
-#     icell::Integer, jcell::Integer, index::AbstractArray{T,N}, min_xcell::Integer
-# ) where {T,N}
-#     val = 0
-#     for i in axes(index, 1)
-#         @inbounds index[i, icell, jcell] && (val += 1)
-#     end
-#     @show val
-#     return val ≥ min_xcell ? false : true
-# end
+# grid_lims = (
+#     extrema(grid_vx[1]).+(di[1]*0.5, - di[1]*0.5),
+#     extrema(grid_vy[2]).+(di[2]*0.5, - di[2]*0.5),
+#        )
 
-# isemptycell(
-#    1,1, particles.index, particles.min_xcell
-# )
+# d=(di[1]*0.5, - di[1]*0.5)
