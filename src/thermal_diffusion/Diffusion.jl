@@ -207,6 +207,8 @@ function JustRelax.solve!(
     _sq_len_RT = 1.0 / sqrt(length(thermal.ResT))
     ϵ = pt_thermal.ϵ
 
+    @parallel update_T!(thermal.Told, thermal.ΔT, thermal.T)
+
     # errors 
     iter_count = Int64[]
     norm_ResT = Float64[]
@@ -279,8 +281,6 @@ function JustRelax.solve!(
     end
 
     av_time = wtime0 / iter # average time per iteration
-
-    @parallel update_T!(thermal.Told, thermal.ΔT, thermal.T)
 
     if isnan(err)
         error("NaN")

@@ -208,9 +208,9 @@ uuid = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
 
 [[Elfutils_jll]]
 deps = ["Artifacts", "Bzip2_jll", "JLLWrappers", "Libdl", "Pkg", "XZ_jll", "Zlib_jll", "argp_standalone_jll", "fts_jll", "obstack_jll"]
-git-tree-sha1 = "8f9fcde6d89b0a3ca51cb2028beab462705c5436"
+git-tree-sha1 = "6880e234507b4b4eaabccb80c2316458d608f1c7"
 uuid = "ab5a07f8-06af-567f-a878-e8bb879eba5a"
-version = "0.182.0+0"
+version = "0.182.0+1"
 
 [[ExprTools]]
 git-tree-sha1 = "10407a39b87f29d47ebaca8edbc75d7c302ff93e"
@@ -325,7 +325,7 @@ version = "1.4.1"
 
 [[JustPIC]]
 deps = ["CUDA", "CellArrays", "MAT", "MuladdMacro", "ParallelStencil", "StaticArrays", "StencilInterpolations", "VectorizationBase"]
-git-tree-sha1 = "7bf05217d42b92a957a151dc43c2e527ef937fb3"
+git-tree-sha1 = "f6aa0997d07d1905b15e2bc66c8eab373ce940f8"
 repo-rev = "albert-dev"
 repo-url = "https://github.com/JuliaGeodynamics/JustPIC.jl.git"
 uuid = "10dc771f-8528-4cd9-9d3b-b21b2e693339"
@@ -690,7 +690,7 @@ uuid = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 
 [[StencilInterpolations]]
 deps = ["CSV", "CUDA", "DataFrames", "MuladdMacro", "SIMD", "VectorizationBase"]
-git-tree-sha1 = "1cc86c69a25e3daded1eac9fa6d360fb2dd45461"
+git-tree-sha1 = "bc10ab9107eae47290145c45570dfe94c8926f99"
 repo-rev = "main"
 repo-url = "https://github.com/albert-de-montserrat/StencilInterpolations.jl.git"
 uuid = "bfc67a74-a27b-455a-b689-c68d3806f53b"
