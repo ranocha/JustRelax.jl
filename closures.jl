@@ -28,9 +28,8 @@ macro harm_zi_ρg(ix, iy, iz)
 end
 
 function foo!(Rx, Ry, Rz, fx, fy, fz)
-
-    for ix in axes(Rx,1), iy in axes(Rx,2), iz in axes(Rx,3)
-        if (1 < ix < size(Rx,1)) && (1 < iy < size(Rx,1)) && (1 < iz < size(Rx,1)) 
+    for ix in axes(Rx, 1), iy in axes(Rx, 2), iz in axes(Rx, 3)
+        if (1 < ix < size(Rx, 1)) && (1 < iy < size(Rx, 1)) && (1 < iz < size(Rx, 1))
             Rx[ix, iy, iz] = @harm_xi_ρg(ix, iy, iz)
             Ry[ix, iy, iz] = @harm_xi_ρg(ix, iy, iz)
             Rz[ix, iy, iz] = @harm_xi_ρg(ix, iy, iz)
@@ -54,8 +53,8 @@ function bar!(Rx, Ry, Rz, fx, fy, fz)
     end
     # ------------------------------------------------------
 
-    for ix in axes(Rx,1), iy in axes(Rx,2), iz in axes(Rx,3)
-        if (1 < ix < size(Rx,1)) && (1 < iy < size(Rx,1)) && (1 < iz < size(Rx,1)) 
+    for ix in axes(Rx, 1), iy in axes(Rx, 2), iz in axes(Rx, 3)
+        if (1 < ix < size(Rx, 1)) && (1 < iy < size(Rx, 1)) && (1 < iz < size(Rx, 1))
             Rx[ix, iy, iz] = harm_xi_ρg(ix, iy, iz)
             Ry[ix, iy, iz] = harm_xi_ρg(ix, iy, iz)
             Rz[ix, iy, iz] = harm_xi_ρg(ix, iy, iz)
@@ -65,10 +64,8 @@ function bar!(Rx, Ry, Rz, fx, fy, fz)
     return nothing
 end
 
-
-@parallel_indices (ix,iy,iz) function foo_ps!(Rx, Ry, Rz, fx, fy, fz)
-
-    if (1 < ix < size(Rx,1)) && (1 < iy < size(Rx,1)) && (1 < iz < size(Rx,1)) 
+@parallel_indices (ix, iy, iz) function foo_ps!(Rx, Ry, Rz, fx, fy, fz)
+    if (1 < ix < size(Rx, 1)) && (1 < iy < size(Rx, 1)) && (1 < iz < size(Rx, 1))
         Rx[ix, iy, iz] = @harm_xi_ρg(ix, iy, iz)
         Ry[ix, iy, iz] = @harm_xi_ρg(ix, iy, iz)
         Rz[ix, iy, iz] = @harm_xi_ρg(ix, iy, iz)
@@ -77,21 +74,24 @@ end
     return nothing
 end
 
-@parallel_indices (ix,iy,iz) function bar_ps!(Rx, Ry, Rz, fx, fy, fz)
+@parallel_indices (ix, iy, iz) function bar_ps!(Rx, Ry, Rz, fx, fy, fz)
 
     # closures ---------------------------------------------
     @inline function harm_xi_ρg(ix, iy, iz)
-        @inbounds 1.0 / (1.0 / fx[ix, iy + 1, iz + 1] + 1.0 / fx[ix + 1, iy + 1, iz + 1]) * 2.0
+        @inbounds 1.0 / (1.0 / fx[ix, iy + 1, iz + 1] + 1.0 / fx[ix + 1, iy + 1, iz + 1]) *
+            2.0
     end
     @inline function harm_yi_ρg(ix, iy, iz)
-        @inbounds 1.0 / (1.0 / fy[ix + 1, iy, iz + 1] + 1.0 / fy[ix + 1, iy + 1, iz + 1]) * 2.0
+        @inbounds 1.0 / (1.0 / fy[ix + 1, iy, iz + 1] + 1.0 / fy[ix + 1, iy + 1, iz + 1]) *
+            2.0
     end
     @inline function harm_zi_ρg(ix, iy, iz)
-        @inbounds 1.0 / (1.0 / fz[ix + 1, iy + 1, iz] + 1.0 / fz[ix + 1, iy + 1, iz + 1]) * 2.0
+        @inbounds 1.0 / (1.0 / fz[ix + 1, iy + 1, iz] + 1.0 / fz[ix + 1, iy + 1, iz + 1]) *
+            2.0
     end
     # ------------------------------------------------------
 
-    if (1 < ix < size(Rx,1)) && (1 < iy < size(Rx,1)) && (1 < iz < size(Rx,1)) 
+    if (1 < ix < size(Rx, 1)) && (1 < iy < size(Rx, 1)) && (1 < iz < size(Rx, 1))
         Rx[ix, iy, iz] = harm_xi_ρg(ix, iy, iz)
         Ry[ix, iy, iz] = harm_xi_ρg(ix, iy, iz)
         Rz[ix, iy, iz] = harm_xi_ρg(ix, iy, iz)
@@ -100,8 +100,8 @@ end
     return nothing
 end
 
-n=128
-Rx, Ry, Rz, fx, fy, fz = ntuple(i->rand(n,n), 6)
+n = 128
+Rx, Ry, Rz, fx, fy, fz = ntuple(i -> rand(n, n), 6)
 
 # @code_typed foo!(Rx, Ry, Rz, fx, fy, fz)
 # @code_typed bar!(Rx, Ry, Rz, fx, fy, fz)
@@ -113,35 +113,33 @@ Rx, Ry, Rz, fx, fy, fz = ntuple(i->rand(n,n), 6)
 # @parallel (1:n,1:n,1:n) foo_ps!(Rx, Ry, Rz, fx, fy, fz)
 # @parallel (1:n,1:n,1:n) bar_ps!(Rx, Ry, Rz, fx, fy, fz)
 
-@btime @parallel (1:$n,1:$n,1:$n) foo_ps!($Rx, $Ry, $Rz, $fx, $fy, $fz) # 5.743  ms(21 allocations: 2.03 KiB)
-@btime @parallel (1:$n,1:$n,1:$n) bar_ps!($Rx, $Ry, $Rz, $fx, $fy, $fz) # 5.782 ms (40 allocations: 2.05 KiB)
-
+@btime @parallel (1:($n), 1:($n), 1:($n)) foo_ps!($Rx, $Ry, $Rz, $fx, $fy, $fz) # 5.743  ms(21 allocations: 2.03 KiB)
+@btime @parallel (1:($n), 1:($n), 1:($n)) bar_ps!($Rx, $Ry, $Rz, $fx, $fy, $fz) # 5.782 ms (40 allocations: 2.05 KiB)
 
 @parallel function foo(Rx, dt)
-    @all(Rx) = @all(Rx)/dt
-    return 
+    @all(Rx) = @all(Rx) / dt
+    return nothing
 end
 
 @parallel function foo1(Rx, dt)
-    _dt() = 1/dt 
+    _dt() = 1 / dt
 
-    @all(Rx) = @all(Rx)*_dt()
-    return 
+    @all(Rx) = @all(Rx) * _dt()
+    return nothing
 end
 
+@parallel_indices (i, j) function foo2(Rx, dt)
+    _dt() = 1 / dt
 
-@parallel_indices (i,j) function foo2(Rx, dt)
-    _dt() = 1/dt 
-
-    Rx[i,j] = Rx[i,j]*_dt()
-    return 
+    Rx[i, j] = Rx[i, j] * _dt()
+    return nothing
 end
 
 dt = rand()
 
 @parallel foo1(Rx, dt)
-@parallel (1:n,1:n) foo2(Rx, dt)
+@parallel (1:n, 1:n) foo2(Rx, dt)
 
 @btime bar($a)
 
-a=rand(20)
+a = rand(20)
