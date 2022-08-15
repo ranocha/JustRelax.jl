@@ -1,15 +1,28 @@
-ENV["PS_PACKAGE"] = :CUDA
+ENV["PS_PACKAGE"] = :Threads
 using Pkg;
 Pkg.activate(".");
 using JustRelax
 using Printf, LinearAlgebra
 using GLMakie
 # setup ParallelStencil.jl environment
-model = PS_Setup(:gpu, Float64, 2)
+model = PS_Setup(:cpu, Float64, 2)
 environment!(model)
 
-# include("/home/albert/Desktop/JustPIC.jl/src/JustPIC.jl")
-using JustPIC
+# using JustPIC
+pth = "C:\\Users\\albert\\Desktop\\JustPIC.jl"
+using MuladdMacro
+using ParallelStencil.FiniteDifferences2D
+
+using StencilInterpolations
+
+include(joinpath(pth, "src/particles.jl"))
+include(joinpath(pth, "src/utils.jl"))
+include(joinpath(pth, "src/advection.jl"))
+include(joinpath(pth, "src/injection.jl"))
+include(joinpath(pth, "src/shuffle_vertex.jl"))
+include(joinpath(pth, "src/staggered/centered.jl"))
+include(joinpath(pth, "src/staggered/velocity.jl"))
+include(joinpath(pth, "src/data.jl"))
 
 function it2str(it)
     it < 10 && return "000$it"
@@ -33,6 +46,7 @@ end
 function compute_dt(S::StokesArrays, di::NTuple{2,T}, dt_diff) where {T}
     return compute_dt(S.V, di, dt_diff)
 end
+
 function compute_dt(V::Velocity, di::NTuple{2,T}, dt_diff) where {T}
     return compute_dt(V.Vx, V.Vy, di[1], di[2], dt_diff)
 end
@@ -52,13 +66,10 @@ end
     return nothing
 end
 
-@parallel_indices (i,j) function init_linear_T(T, y)
-    T[i,j] = clamp(-y[j]*(1 + 0.05*rand()), 0.0, 1.0)
-    return 
+@parallel_indices (i, j) function init_linear_T(T, y)
+    T[i, j] = clamp(-y[j] * (1 + 0.05 * rand()), 0.0, 1.0)
+    return nothing
 end
-
-
-@parallel (1:nx,1:ny) init_linear_T(thermal.T, xvi[2])
 
 function twoxtwo_particles2D(nxcell, max_xcell, min_xcell, x, y, dx, dy, nx, ny)
     nx -= 1
@@ -85,14 +96,16 @@ function twoxtwo_particles2D(nxcell, max_xcell, min_xcell, x, y, dx, dy, nx, ny)
         end
     end
 
-    if PS_PACKAGE === :CUDA
+    if ENV["PS_PACKAGE"] === "CUDA"
         pxi = CuArray.((px, py))
         return Particles(
             pxi, CuArray(index), CuArray(inject), nxcell, max_xcell, min_xcell, np, (nx, ny)
         )
 
     else
-        return Particles((px, py), index, inject, nxcell, max_xcell, min_xcell, np, (nx, ny))
+        return Particles(
+            (px, py), index, inject, nxcell, max_xcell, min_xcell, np, (nx, ny)
+        )
     end
 end
 
@@ -145,13 +158,11 @@ function thermal_convection2D(; nx=64, ny=64, ar=3, ly=1e0)
     # Thermal diffusion ----------------------------------
     # allocate and define initial geotherm
     thermal = ThermalArrays(ni)
-    thermal.T .= [-xvi[2][j]*(1 + 0.01*rand()) for i in axes(thermal.T, 1), j in axes(thermal.T, 2)]
-    clamp!(thermal.T, 0.0, 1.0)
-
-    @parallel (1:nx,1:ny) init_linear_T(thermal.T, xvi[2])
-
-
+    # thermal.T .= PTArray([-xvi[2][j]*(1 + 0.01*rand()) for i in axes(thermal.T, 1), j in axes(thermal.T, 2)])
+    # clamp!(thermal.T, 0.0, 1.0)
+    @parallel (1:nx, 1:ny) init_linear_T(thermal.T, xvi[2])
     @parallel assign!(thermal.Told, thermal.T)
+
     # physical parameters
     ρ0 = 1 / Pra * η0 / κ
     ρ = @fill(ρ0, ni...)
@@ -197,20 +208,20 @@ function thermal_convection2D(; nx=64, ny=64, ar=3, ly=1e0)
     # Initialize animation -------------------------------
     fig = Figure(; resolution=(1600, 1200))
     ax = Axis(fig[1, 1])
-    hm = heatmap!(ax, xvi[1], xvi[2], thermal.T; colormap=:inferno)
+    hm = heatmap!(ax, xvi[1], xvi[2], Array(thermal.T); colormap=:inferno)
 
     # Physical time loop
     local t = 0.0
     it = 0
-    nt = 3000
+    nt = 25
     local iters
     # while it ≤ 100
     for it in 1:nt
         # Stokes solver ---------------
         iters = solve!(stokes, pt_stokes, di, li, max_li, freeslip, fy, η; iterMax=10e3)
-
-        @show dt = compute_dt(stokes, di, dt_diff)
         # ------------------------------
+
+        dt = compute_dt(stokes, di, dt_diff)
 
         # Thermal solver ---------------
         # grid2particle_xvertex!(ρCₚp, xvi, ρCp,  particles.coords)
@@ -263,14 +274,14 @@ function thermal_convection2D(; nx=64, ny=64, ar=3, ly=1e0)
 
         if it % 10 == 0
             hm[3] = thermal.T
-            save("figs2/fig_$(it2str(it)).png", fig)
+            # save("figs_cuda/fig_$(it2str(it)).png", fig)
         end
-
     end
+    fig
 
-    return (ni=ni, xci=xci, li=li, di=di), thermal, iters
+    # return (ni=ni, xci=xci, li=li, di=di), thermal, iters
+    return fig
 end
-
 
 nx = 287
 ny = 95
@@ -278,4 +289,4 @@ lx = 3e0
 ly = 1e0
 ar = 8
 
-# thermal_convection2D(; nx=nx, ny=ny, ar=ar, ly=ly)
+@time fig = thermal_convection2D(; nx=nx, ny=ny, ar=ar, ly=ly)

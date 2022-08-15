@@ -5,7 +5,7 @@ using JustRelax
 using Printf, LinearAlgebra
 using GLMakie
 # setup ParallelStencil.jl environment
-model = PS_Setup(:cpu, Float64, 2)
+model = PS_Setup(:gpu, Float64, 2)
 environment!(model)
 
 # include("/home/albert/Desktop/JustPIC.jl/src/JustPIC.jl")
@@ -155,11 +155,12 @@ function thermal_convection2D(; nx=64, ny=64, lx=3e0, ly=1e0)
 
     # @parallel (1:nx, 1:ny) init_T!(thermal.T, ΔT, w, 1:nx, 1:ny, di..., lx, ly)
 
-    thermal.T .= [
+    thermal.T .= PTArray([
         ΔT *
         exp(-(((ix - 1) * di[1] - 0.5 * lx) / w)^2 - (((iy - 1) * di[2] - 0.5ly) / w)^2) for
         ix in 1:size(thermal.T, 1), iy in 1:size(thermal.T, 2)
-    ]
+    ])
+
     thermal.T[:, 1] .= ΔT / 2.0
     thermal.T[:, end] .= -ΔT / 2.0
 
