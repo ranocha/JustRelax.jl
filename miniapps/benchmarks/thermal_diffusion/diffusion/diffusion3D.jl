@@ -32,7 +32,7 @@ function diffusion_3D(;
     # Physical domain
     ni = (nx, ny, nz)
     li = (lx, ly, lz)  # domain length in x- and y-
-    di = @. li / ni # grid step in x- and -y
+    di = @. li / (ni-1) # grid step in x- and -y
     xci, = lazy_grid(di, li; origin=(0, 0, -lz)) # nodes at the center and vertices of the cells
 
     igg = IGG(init_global_grid(nx, ny, nz; init_MPI=init_MPI)...) # init MPI

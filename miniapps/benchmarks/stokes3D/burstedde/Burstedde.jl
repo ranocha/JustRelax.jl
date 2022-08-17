@@ -181,9 +181,6 @@ function burstedde(; nx=16, ny=16, nz=16, init_MPI=true, finalize_MPI=false)
     lx = ly = lz = 1e0
     li = (lx, ly, lz)  # domain length in x- and y-
     igg = IGG(init_global_grid(nx, ny, nz; init_MPI=init_MPI)...) # init MPI
-    @static if USE_GPU # select one GPU per MPI local rank (if >1 GPU per node)
-        select_device()
-    end
     li = (lx, ly, lz)  # domain length in x- and y-
     di = @. li / (nx_g(), ny_g(), nz_g()) # grid step in x- and -y
     max_li = max(li...)
@@ -229,7 +226,7 @@ function burstedde(; nx=16, ny=16, nz=16, init_MPI=true, finalize_MPI=false)
             dt,
             igg;
             iterMax=10e3,
-            b_width=(1, 1, 1),
+            b_width=(4, 4, 4),
         )
         t += dt
     end

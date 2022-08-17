@@ -125,7 +125,6 @@ end
     dx::T,
     dy::T,
 ) where {T}
-
     @all(τxx) =
         (@all(τxx) + @all(τxx_o) * @Gr() + T(2) * @all(Gdτ) * (@d_xa(Vx) / dx)) /
         (one(T) + @all(Gdτ) / @all(η) + @Gr())
@@ -710,19 +709,16 @@ end
     _harm_zi_ρg = (ix, iy, iz) -> harm_zi_ρg(fz, ix, iy, iz)
 
     function _harm_xi_dτ_Rho(ix, iy, iz)
-        1.0 / (1.0 / dτ_Rho[ix, iy + 1, iz + 1] +
-               1.0 / dτ_Rho[ix + 1, iy + 1, iz + 1]
-        ) * 2.0
+        1.0 / (1.0 / dτ_Rho[ix, iy + 1, iz + 1] + 1.0 / dτ_Rho[ix + 1, iy + 1, iz + 1]) *
+               2.0
     end
     function _harm_yi_dτ_Rho(ix, iy, iz)
-        1.0 / (1.0 / dτ_Rho[ix + 1, iy, iz + 1] +
-               1.0 / dτ_Rho[ix + 1, iy + 1, iz + 1]
-        ) * 2.0
+        1.0 / (1.0 / dτ_Rho[ix + 1, iy, iz + 1] + 1.0 / dτ_Rho[ix + 1, iy + 1, iz + 1]) *
+               2.0
     end
     function _harm_zi_dτ_Rho(ix, iy, iz)
-        1.0 / (1.0 / dτ_Rho[ix + 1, iy + 1, iz] +
-               1.0 / dτ_Rho[ix + 1, iy + 1, iz + 1]
-        ) * 2.0
+        1.0 / (1.0 / dτ_Rho[ix + 1, iy + 1, iz] + 1.0 / dτ_Rho[ix + 1, iy + 1, iz + 1]) *
+               2.0
     end
     # ------------------------------------------------------
 
@@ -850,7 +846,7 @@ function JustRelax.pureshear_bc!(
         -εbg * ((ix - 1) * dx - 0.5 * lx) for ix in 1:size(Vx, 1), iy in 1:size(Vx, 2),
         iz in 1:size(Vx, 3)
     ])
-    stokes.V.Vz .= PTArray([
+    return stokes.V.Vz .= PTArray([
         εbg * ((iz - 1) * dz - 0.5 * lz) for ix in 1:size(Vz, 1), iy in 1:size(Vz, 2),
         iz in 1:size(Vz, 3)
     ])

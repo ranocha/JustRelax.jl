@@ -20,7 +20,8 @@ using LinearAlgebra
 using Printf
 using CUDA
 
-import JustRelax: ThermalParameters, solve!, assign!, thermal_boundary_conditions!, update_T!
+import JustRelax:
+    ThermalParameters, solve!, assign!, thermal_boundary_conditions!, update_T!
 import JustRelax: ThermalArrays, PTThermalCoeffs
 
 export solve!
@@ -154,7 +155,8 @@ using LinearAlgebra
 using CUDA
 using Printf
 
-import JustRelax: ThermalParameters, solve!, assign!, thermal_boundary_conditions!, update_T!
+import JustRelax:
+    ThermalParameters, solve!, assign!, thermal_boundary_conditions!, update_T!
 import JustRelax: ThermalArrays, PTThermalCoeffs, solve!
 
 export solve!
@@ -306,7 +308,13 @@ using Printf
 using CUDA
 
 import JustRelax:
-    IGG, ThermalParameters, solve!, assign!, norm_mpi, thermal_boundary_conditions!, update_T!
+    IGG,
+    ThermalParameters,
+    solve!,
+    assign!,
+    norm_mpi,
+    thermal_boundary_conditions!,
+    update_T!
 import JustRelax: ThermalArrays, PTThermalCoeffs, solve!
 
 export solve!
@@ -455,7 +463,7 @@ function JustRelax.solve!(
     av_time = wtime0 / iter # average time per iteration
 
     @parallel update_T!(thermal.Told, thermal.ΔT, thermal.T)
-    
+
     if isnan(err)
         error("NaN")
     end

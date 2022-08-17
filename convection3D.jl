@@ -78,13 +78,12 @@ function compute_dt(S::StokesArrays, di::NTuple{N,T}, dt_diff) where {N,T}
     return compute_dt(S.V, di, dt_diff)
 end
 
-
 function compute_dt(V::Velocity, di::NTuple{3,T}, dt_diff) where {T}
     return compute_dt(V.Vx, V.Vy, V.Vz, di[1], di[2], di[3], dt_diff)
 end
 
 function compute_dt(Vx, Vy, Vz, dx, dy, dz, dt_diff)
-    dt_adv = min(dx / maximum(abs.(Vx)), dy / maximum(abs.(Vy)), dz / maximum(abs.(Vz))) / 8.1
+    dt_adv = min(dx / maximum(abs.(Vx)), dy / maximum(abs.(Vy)), dz / maximum(abs.(Vz))) / 6.1
     return min(dt_diff, dt_adv)
 end
 
@@ -106,10 +105,23 @@ end
 @parallel_indices (i, j, k) function init_block_T(T, x, y, z)
 
     # if (4 ≤ x[i] ≤ 4) && (0.4 ≤ y[j] ≤ 0.6) && (-0.6 ≤ z[k] ≤ -0.4)
-    if (4-0.1 ≤ x[i] ≤ 4+0.1) && (0.4 ≤ y[j] ≤ 0.6) && (-0.52 ≤ z[k] ≤ -0.48)
+    if (4-0.2 ≤ x[i] ≤ 4+0.2) && (0.3 ≤ y[j] ≤ 0.7) && (-0.52 ≤ z[k] ≤ -0.48)
         T[i, j, k] = 0.0
     else
         T[i, j, k] = 1.0
+    end
+
+    return nothing
+end
+
+function foo_T!(T, x, y, z)
+
+    for k in axes(T,3), j in axes(T,2), i in axes(T,1)
+        if (4-0.2 ≤ x[i] ≤ 4+0.2) && (0.3 ≤ y[j] ≤ 0.7) && (-0.52 ≤ z[k] ≤ -0.48)
+            T[i, j, k] = 0.0
+        else
+            T[i, j, k] = 1.0
+        end
     end
 
     return nothing
@@ -136,12 +148,12 @@ function twoxtwo_particles3D(nxcell, max_xcell, min_xcell, x, y, z, dx, dy, dz, 
         x0, y0, z0 = x[i], y[j], z[k]
         # fill index array
         for l in 1:nxcell
-            # px[l, i, j, k] = x0 + dx_2 * (1.0 + 0.8 * (rand() - 0.5))
-            # py[l, i, j, k] = y0 + dy_2 * (1.0 + 0.8 * (rand() - 0.5))
-            # pz[l, i, j, k] = z0 + dz_2 * (1.0 + 0.8 * (rand() - 0.5))
-            px[l, i, j, k] = x0 + dx*rand()
-            py[l, i, j, k] = y0 + dy*rand()
-            pz[l, i, j, k] = z0 + dz*rand()
+            px[l, i, j, k] = x0 + dx_2 * (1.0 + 0.8 * (rand() - 0.5))
+            py[l, i, j, k] = y0 + dy_2 * (1.0 + 0.8 * (rand() - 0.5))
+            pz[l, i, j, k] = z0 + dz_2 * (1.0 + 0.8 * (rand() - 0.5))
+            # px[l, i, j, k] = x0 + dx*rand()
+            # py[l, i, j, k] = y0 + dy*rand()
+            # pz[l, i, j, k] = z0 + dz*rand()
             index[l, i, j, k] = true
         end
     end
@@ -190,7 +202,7 @@ lx = 3e0
 ly = 1e0
 lz = 1e0
 ar = 8
-init_MPI=true
+init_MPI=false
 finalize_MPI=false
 
 function thermal_convection3D(; nx=64, ny=64, nz=64, ar=3, ly=1e0, lz=1e0, init_MPI=true, finalize_MPI=false)
@@ -224,8 +236,8 @@ function thermal_convection3D(; nx=64, ny=64, nz=64, ar=3, ly=1e0, lz=1e0, init_
     thermal = ThermalArrays(ni)
     # thermal.T .= PTArray([-xvi[2][j]*(1 + 0.01*rand()) for i in axes(thermal.T, 1), j in axes(thermal.T, 2)])
     # clamp!(thermal.T, 0.0, 1.0)
-    @parallel (1:nx, 1:ny, 1:nz) init_linear_T(thermal.T, xvi[3])
-    # @parallel (1:nx, 1:ny, 1:nz) init_block_T(thermal.T, xvi...)
+    # @parallel (1:nx, 1:ny, 1:nz) init_linear_T(thermal.T, xvi[3])
+    @parallel (1:nx, 1:ny, 1:nz) init_block_T(thermal.T, xvi...)
     @parallel assign!(thermal.Told, thermal.T)
 
     # physical parameters
@@ -286,7 +298,7 @@ function thermal_convection3D(; nx=64, ny=64, nz=64, ar=3, ly=1e0, lz=1e0, init_
 
     # Physical time loop
     it = 0
-    nt = 10
+    nt = 5
     local t = 0.0
     local iters
     # while it ≤ 100
@@ -305,65 +317,52 @@ function thermal_convection3D(; nx=64, ny=64, nz=64, ar=3, ly=1e0, lz=1e0, init_
             G,
             dt,
             igg;
-            iterMax=10e3,
+            iterMax=50e3,
             b_width=(4, 4, 4),
         )
         # ------------------------------
 
         @show dt = compute_dt(stokes, di, dt_diff)
-        @show velocity(stokes)
+        # @show velocity(stokes)
 
         # Thermal solver ---------------
-        # grid2particle_xvertex!(ρCₚp, xvi, ρCp,  particles.coords)
-        # _gather_temperature_xvertex!(thermal.T, ρCₚp, pT, xvi,  particles.coords)
-
         pt_thermal = PTThermalCoeffs(K, ρCp, dt, di, li; ϵ=1e-4, CFL=5e-2 / √3)
-        iters = solve!(
-            thermal,
-            pt_thermal,
-            thermal_parameters,
-            thermal_bc,
-            ni,
-            di,
-            igg,
-            dt;
-            iterMax=100e3,
-            nout=10,
-            verbose=false,
-        )
+        # iters = solve!(
+        #     thermal,
+        #     pt_thermal,
+        #     thermal_parameters,
+        #     thermal_bc,
+        #     ni,
+        #     di,
+        #     igg,
+        #     dt;
+        #     iterMax=100e3,
+        #     nout=10,
+        #     verbose=false,
+        # )
         # ------------------------------
 
         # Advection --------------------
         # interpolate fields from grid vertices to particles
         grid2particle_xvertex!(pT, xvi, thermal.T, particles.coords)
-        # int2part_vertex!(pT, thermal.T, thermal.Told, particles, xvi)
         # advect particles in space
         V = (stokes.V.Vx, stokes.V.Vy, stokes.V.Vy)
         advection_RK2_edges!(particles, V, grid_vx, grid_vy, grid_vz, dt, 0.5)
 
-        # ii = findall(particles.index);
-        # a = (px0, py0, pz0) .- particles.coords
-        # max_displ = maximum(@. √(( a[1][ii]^2 + a[2][ii]^2 + a[3][ii]^2)))
-        # @show max_displ
-        # # any(di.< max_displ) && break
-
         # advect particles in memory
-        @edit shuffle_particles_vertex!(particles, xvi, particle_args)
         cleanse!(particles, particle_args, xvi)
-        foo(particles, xvi)
+        shuffle_particles_vertex!(particles, xvi, particle_args)
+        # bar(particles, xvi)
 
         # check if we need to inject particles
-        @show inject = check_injection(particles)
-        inject && inject_particles!(particles, particle_args, (thermal.T,), xvi)
+        # @show inject = check_injection(particles)
+        # inject && inject_particles!(particles, particle_args, (thermal.T,), xvi)
         # interpolate fields from particle to grid vertices
         gathering_xvertex!(thermal.T, pT, xvi, particles.coords)
-        # gather_temperature_xvertex!(thermal.T, pT, ρCₚp, xvi, particles.coords)
-
-        # update Temperature field
-        # @parallel add_dTdt(thermal.T, thermal.ΔT)
-        # thermal.T[:, :, 1] .= 1.0
-        # thermal.T[:, :, end] .= 0.0
+        # thermal.T[:,:,1] .= 1.0
+        # thermal.T[:,:,end] .= 0.0
         # ------------------------------
+
         # Update viscosity
         @parallel viscosity!(η, thermal.T)
 
@@ -373,24 +372,21 @@ function thermal_convection3D(; nx=64, ny=64, nz=64, ar=3, ly=1e0, lz=1e0, init_
         # @show it += 1
         # t += dt
 
-        # copyto!(px0, particles.coords[1])
-        # copyto!(py0, particles.coords[2])
-        # copyto!(pz0, particles.coords[3])
-
-        if it % 1 == 0
-            # hm[3] = Array(thermal.T[:, ny÷2,:]);
-            # hm[3] = Array(stokes.V.Vz[:, ny÷2,:]);
+        # if it % 50 == 0
+        #     # hm[3] = Array(thermal.T[:, ny÷2,:]);
+        #     # hm[3] = Array(stokes.V.Vz[:, ny÷2,:]);
             ii=findall(particles.index);
             Px,_,Pz = particles.coords;
             pxx = Px[ii];
             pzz = Pz[ii];
-            # f,ax,h=heatmap(xvi[1], xvi[3], stokes.V.Vz[:,ny÷2,:])
-            f,ax,h=heatmap(xvi[1], xvi[3], thermal.T[:,ny÷2,:])
-            scatter!(pxx,pzz,color=:red, markersize=10)
-            # save("figs_3d/fig_$(it2str(it)).png", fig)
-            save("figs_3d/fig_$(it2str(it)).png", f)
-        end
-        # f
+        #     # f,ax,h=heatmap(xci[1], xvi[3], stokes.V.Vz[:,ny÷2,:])
+        #     f,ax,h=heatmap(xvi[1], xvi[3], thermal.T[:,ny÷2,:])
+            scatter(pxx,pzz,color=:blue, markersize=10)
+        #     # save("figs_3d/fig_$(it2str(it)).png", fig)
+        #     save("figs_3d/fig_$(it2str(it)).png", f)
+        # end
+        # # f
+
     end
         
     finalize_global_grid(; finalize_MPI=finalize_MPI)
@@ -399,24 +395,35 @@ function thermal_convection3D(; nx=64, ny=64, nz=64, ar=3, ly=1e0, lz=1e0, init_
     # return fig
 end
 
-nx = 64
+nx = 32
 ny = 8
 nz = 32
 lx = 3e0
 ly = 1e0
 ly = 1e0
 ar = 8
+init_MPI=true
+finalize_MPI=false
 
-# # @time fig=thermal_convection2D(; nx=nx, ny=ny, ar=ar, ly=ly)
+
+# Save julia setup 
+vtk_grid("Sinker", xvi[1], xvi[2], xvi[3]) do vtk
+    vtk["T"] = thermal.T
+    vtk["Vx"] = stokes.V.Vx[1:ni[1], 1:ni[2], 1:ni[3]]
+    vtk["Vy"] = stokes.V.Vy[1:ni[1], 1:ni[2], 1:ni[3]]
+    vtk["Vz"] = stokes.V.Vz[1:ni[1], 1:ni[2], 1:ni[3]]
+end
+
+# thermal_convection3D(; nx=nx, ny=ny, nz=nz, ar=3, ly=ly, lz=lz, init_MPI=init_MPI, finalize_MPI=finalize_MPI)
 
 # ii=findall(particles.index);
 # pxx,pyy,pzz = particles.coords;
 # pxx = pxx[ii];
 # pyy = pyy[ii];
 # pzz = pzz[ii];
+# scatter(pxx,pzz,color=:red, markersize=10)
 # f,ax,h=heatmap(xvi[1], xvi[3], thermal.T[:,ny÷2,:])
 # scatter!(pxx,pzz,color=pT[ii], markersize=25)
-# scatter!(pxx,pzz,color=:red, markersize=10)
 # scatter!(x,z, markersize=10)
 # scatter(pxx,pyy,pzz,color=pT[ii], markersize=50)
 
@@ -424,69 +431,70 @@ ar = 8
 # y = [y for x in xvi[1], y in xvi[2], z in xvi[3]][:];
 # z = [z for x in xvi[1], y in xvi[2], z in xvi[3]][:];
 
-# scatter(pxx,pzz, markersize=10)
+# # scatter!(x,z, markersize=10)
 
-# # plot(thermal.T, ny)
+# # # # plot(thermal.T, ny)
+
+# scatter!(p0[1][:],p0[3][:],color=:blue, markersize=25)
+
+# # import StencilInterpolations: grid_size, bilinear_weight
+
+# # # foo!(thermal.T, pT, xvi, particles.coords)
+
+# # function foo!(
+# #     F::AbstractArray, Fp::AbstractArray, xi::NTuple{3, T}, particle_coords
+# # ) where {T}
+# #     dxi = grid_size(xi)
+# #     Threads.@threads for knode in axes(F,3)
+# #         for jnode in axes(F,2), inode in axes(F,1)
+# #             _foo!(F, Fp, inode, jnode, knode, xi, particle_coords, dxi)
+# #         end
+# #     end
+# # end
+
+# # @inbounds function _foo!(F, Fp, inode, jnode, knode, xi::NTuple{3, T}, p, dxi) where T
+# #     px, py, pz = p # particle coordinates
+# #     nx, ny, nz = size(F)
+# #     xvertex = (xi[1][inode], xi[2][jnode],  xi[3][knode]) # cell lower-left coordinates
+# #     ω, ωxF = 0.0, 0.0 # init weights
+# #     max_xcell = size(px, 1) # max particles per cell
+
+# #     # iterate over cells around i-th node
+# #     for koffset in -1:0
+# #         kvertex = koffset + knode
+# #         for joffset in -1:0
+# #             jvertex = joffset + jnode
+# #             for ioffset in -1:0
+# #                 ivertex = ioffset + inode
+# #                 # make sure we stay within the grid
+# #                 if (1 ≤ ivertex < nx) && (1 ≤ jvertex < ny) && (1 ≤ kvertex < nz)
+# #                     # iterate over cell
+# #                     @inbounds for i in 1:max_xcell
+# #                         p_i = (
+# #                             px[i, ivertex, jvertex, kvertex],
+# #                             py[i, ivertex, jvertex, kvertex], 
+# #                             pz[i, ivertex, jvertex, kvertex]
+# #                         )
+# #                         # ignore lines below for unused allocations
+# #                         isnan(p_i[1]) && continue
+# #                         ω_i = bilinear_weight(xvertex, p_i, dxi)
+# #                         ω += ω_i
+# #                         ωxF += ω_i * Fp[i, ivertex, jvertex, kvertex]
+# #                         @show ω_i,  ivertex, jvertex, kvertex
+# #                     end
+# #                 end
+# #             end
+# #         end
+# #     end
+
+# #     return F[inode, jnode, knode] = ωxF / ω
+# # end
 
 
-# import StencilInterpolations: grid_size, bilinear_weight
-
-# # foo!(thermal.T, pT, xvi, particles.coords)
-
-# function foo!(
-#     F::AbstractArray, Fp::AbstractArray, xi::NTuple{3, T}, particle_coords
-# ) where {T}
-#     dxi = grid_size(xi)
-#     Threads.@threads for knode in axes(F,3)
-#         for jnode in axes(F,2), inode in axes(F,1)
-#             _foo!(F, Fp, inode, jnode, knode, xi, particle_coords, dxi)
-#         end
-#     end
-# end
-
-# @inbounds function _foo!(F, Fp, inode, jnode, knode, xi::NTuple{3, T}, p, dxi) where T
-#     px, py, pz = p # particle coordinates
-#     nx, ny, nz = size(F)
-#     xvertex = (xi[1][inode], xi[2][jnode],  xi[3][knode]) # cell lower-left coordinates
-#     ω, ωxF = 0.0, 0.0 # init weights
-#     max_xcell = size(px, 1) # max particles per cell
-
-#     # iterate over cells around i-th node
-#     for koffset in -1:0
-#         kvertex = koffset + knode
-#         for joffset in -1:0
-#             jvertex = joffset + jnode
-#             for ioffset in -1:0
-#                 ivertex = ioffset + inode
-#                 # make sure we stay within the grid
-#                 if (1 ≤ ivertex < nx) && (1 ≤ jvertex < ny) && (1 ≤ kvertex < nz)
-#                     # iterate over cell
-#                     @inbounds for i in 1:max_xcell
-#                         p_i = (
-#                             px[i, ivertex, jvertex, kvertex],
-#                             py[i, ivertex, jvertex, kvertex], 
-#                             pz[i, ivertex, jvertex, kvertex]
-#                         )
-#                         # ignore lines below for unused allocations
-#                         isnan(p_i[1]) && continue
-#                         ω_i = bilinear_weight(xvertex, p_i, dxi)
-#                         ω += ω_i
-#                         ωxF += ω_i * Fp[i, ivertex, jvertex, kvertex]
-#                         @show ω_i,  ivertex, jvertex, kvertex
-#                     end
-#                 end
-#             end
-#         end
-#     end
-
-#     return F[inode, jnode, knode] = ωxF / ω
-# end
-
-
-function foo(particles, xvi)   
+function check_lost(particles, xvi)
     pxx,pyy,pzz=particles.coords;
     n = 0
-    for k in axes(pxx,4), j in axes(pxx,3), i in axes(pxx,2),ip in axes(pxx,1)
+    for k in axes(pxx,4), j in axes(pxx,3), i in axes(pxx,2), ip in axes(pxx,1)
         if (i < nx) && (j < ny) && (k < nz) && particles.index[ip,i,j,k]
             p_i = (
                 pxx[ip,i,j,k],
@@ -501,35 +509,168 @@ function foo(particles, xvi)
             )
 
             if !isincell(p_i, xv, di) 
-                n+=1 
-                println("ATENCIO......")
-                @show ip,i,j,k
-                println(".............")
-                return ip,i,j,k
+                n+=1
             end
         end
 
     end
+    n
 end
 
+# ii=findall(particles.index);
+# pxx,pyy,pzz = particles.coords;
+# p_x = pxx[U...];
+# p_y = pyy[U...];
+# p_z = pzz[U...];
+# # f,ax,h=heatmap(xvi[1], xvi[3], thermal.T[:,ny÷2,:])
+# # scatter!(pxx,pzz,color=pT[ii], markersize=25)
+# # scatter!(pxx,pzz,color=:red, markersize=10)
+# # scatter!(x,z, markersize=10)    
+# # scatter(pxx,pyy,pzz,color=pT[ii], markersize=50)
 
+# x = [x for x in xvi[1], y in xvi[2], z in xvi[3]][:];
+# y = [y for x in xvi[1], y in xvi[2], z in xvi[3]][:];
+# z = [z for x in xvi[1], y in xvi[2], z in xvi[3]][:];
 
+# scatter(x,z, markersize=10)
+# scatter!((p_x,p_z), markersize=10, color=:red)
+# scatter!((xvi[1][I[1]], xvi[3][I[3]]), markersize=10, color=:orange)
 
-ii=findall(particles.index);
-pxx,pyy,pzz = particles.coords;
-p_x = pxx[Ip...];
-p_y = pyy[Ip...];
-p_z = pzz[Ip...];
-# f,ax,h=heatmap(xvi[1], xvi[3], thermal.T[:,ny÷2,:])
-# scatter!(pxx,pzz,color=pT[ii], markersize=25)
-# scatter!(pxx,pzz,color=:red, markersize=10)
-# scatter!(x,z, markersize=10)
-# scatter(pxx,pyy,pzz,color=pT[ii], markersize=50)
+# function foo!(particles::Particles, grid::NTuple{3,T}, args) where {T}
+#     # unpack
+#     (; coords, index) = particles
+#     nxi = length.(grid)
+#     nx, ny = nxi
+#     # px, py = particle_coords
+#     dxi = compute_dx(grid)
 
-x = [x for x in xvi[1], y in xvi[2], z in xvi[3]][:];
-y = [y for x in xvi[1], y in xvi[2], z in xvi[3]][:];
-z = [z for x in xvi[1], y in xvi[2], z in xvi[3]][:];
+#     n_i = ceil(Int, nx * 0.5)
+#     n_j = ceil(Int, ny * 0.5)
+#     n_k = ceil(Int, nz * 0.5)
 
-scatter(x,z, markersize=10)
-scatter!((p_x,p_z), markersize=10, color=:red)
-scatter!((xvi[1][I[1]], xvi[3][I[3]]), markersize=10, color=:orange)
+#     for offset_x in 1:2, offset_y in 1:2, offset_z in 1:2
+#         @parallel (1:n_i, 1:n_j, 1:n_k) foo_ps!(
+#                 coords, grid, dxi, nxi, index, offset_x, offset_y, offset_z, args,
+#             )
+#     end
+
+# end
+
+# foo!(particles, grid, args)
+# # bar(particles, xvi)
+
+# @parallel_indices (icell, jcell, kcell) function foo_ps!(
+#     particle_coords,
+#     grid,
+#     dxi::NTuple{3,T},
+#     nxi,
+#     index,
+#     offset_x,
+#     offset_y,
+#     offset_z,
+#     args,
+# ) where {T}
+#     nx, ny = nxi
+#     i = 2 * (icell - 1) + offset_x
+#     j = 2 * (jcell - 1) + offset_y
+#     k = 2 * (kcell - 1) + offset_z
+
+#     if (i ≤ nx - 1) && (j ≤ ny - 1) && (k ≤ nz - 1)
+#         _foo_cpu!(particle_coords, grid, dxi, nxi, index, (i, j, k), args)
+#     end
+#     return nothing
+# end
+
+# function foo_cpu!(
+#     particle_coords,
+#     grid,
+#     dxi::NTuple{3,T},
+#     nxi,
+#     index,
+
+#     offset_x,
+#     offset_y,
+#     offset_z,
+#     args,
+#     icell,
+#     jcell,
+#     kcell
+# ) where {T}
+#     nx, ny = nxi
+#     i = 2 * (icell - 1) + offset_x
+#     j = 2 * (jcell - 1) + offset_y
+#     k = 2 * (kcell - 1) + offset_z
+
+#     if (i ≤ nx - 1) && (j ≤ ny - 1) && (k ≤ nz - 1)
+#         _foo_cpu!(particle_coords, grid, dxi, nxi, index, (i, j, k), args)
+#     end
+#     return nothing
+# end
+
+# function _foo_cpu!(
+#     particle_coords, grid, dxi, nxi, index, parent_cell::NTuple{3,Int64}, args
+# )
+
+#     # coordinate of the lower-most-left coordinate of the parent cell 
+#     corner_xi = corner_coordinate(grid, parent_cell)
+#     # iterate over neighbouring (child) cells
+#     for k in -1:1, j in -1:1, i in -1:1
+#         idx_loop = (i, j, k)
+#         if idx_loop != (0,0,0)
+#             __foo_cpu!(
+#                 particle_coords, corner_xi, dxi, nxi, index, parent_cell, args, idx_loop
+#             )
+#         end
+#     end
+
+#     return nothing
+# end
+
+# function __foo_cpu!(
+#     particle_coords,
+#     corner_xi,
+#     dxi,
+#     nxi,
+#     index,
+#     parent_cell::NTuple{N1,Int64},
+#     args::NTuple{N2,T},
+#     idx_loop::NTuple{N1,Int64},
+# ) where {N1,N2,T}
+#     idx_child = child_index(parent_cell, idx_loop)
+#     # ignore parent cell and "ghost" cells outside the domain
+#     @inbounds if indomain(idx_child, nxi)
+
+#         # iterate over particles in child cell 
+#         for ip in axes(particle_coords[1], 1)
+#             if index[ip, idx_child...] # true if memory allocation is filled with a particle
+#                 p_child = cache_particle(particle_coords, ip, idx_child)
+#                 # if parent_cell == (2,1,2) && idx_child == (2,1,1)
+#                 #     @show parent_cell, ip
+#                 # end
+#                 # check whether the incoming particle is inside the cell and move it
+#                 if isincell(p_child, corner_xi, dxi) && !isparticleempty(p_child)
+#                     # hold particle variables
+#                     current_p = p_child
+#                     current_args = cache_args(args, ip, idx_child)
+
+#                     # remove particle from child cell
+#                     index[ip, idx_child...] = false
+#                     empty_particle!(particle_coords, ip, idx_child)
+#                     empty_particle!(args, ip, idx_child)
+
+#                     # check whether there's empty space in parent cell
+#                     free_idx = find_free_memory(index, idx_child)
+#                     free_idx == 0 && continue
+                    
+#                     # move particle and its fields to the first free memory location
+#                     index[free_idx, parent_cell...] = true
+#                     fill_particle!(particle_coords, current_p, free_idx, parent_cell)
+#                     fill_particle!(args, current_args, free_idx, parent_cell)
+#                 end
+#             end
+#         end
+#     end
+# end
+
+# foo!(particles, grid, args)
+# bar(particles, xvi)
