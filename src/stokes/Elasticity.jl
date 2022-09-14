@@ -34,8 +34,8 @@ end
     max_li::T,
 ) where {T,M}
     @all(dτ_Rho) =
-        Vpdτ * max_li / Re / (one(T) / (one(T) / @all(ητ) + one(T) / (@all(G) * dt)))
-    @all(Gdτ) = Vpdτ^2 / @all(dτ_Rho) / (r + T(2.0))
+        Vpdτ * max_li / (Re * (one(T) / (one(T) / @all(ητ) + one(T) / (@all(G) * dt))))
+    @all(Gdτ) = Vpdτ^2 / (@all(dτ_Rho) * (r + T(2.0)))
     return nothing
 end
 
@@ -50,7 +50,6 @@ using LinearAlgebra
 using CUDA
 using Printf
 
-# using ..JustRelax: solve!
 import JustRelax: stress, strain, elastic_iter_params!, PTArray, Velocity, SymmetricTensor
 import JustRelax: Residual, StokesArrays, PTStokesCoeffs, AbstractStokesModel, ViscoElastic
 import JustRelax: compute_maxloc!, solve!
@@ -65,6 +64,8 @@ export solve!
     dVx::AbstractArray{T,2},
     dVy::AbstractArray{T,2},
     P::AbstractArray{T,2},
+    Rx::AbstractArray{T,2},
+    Ry::AbstractArray{T,2},
     τxx::AbstractArray{T,2},
     τyy::AbstractArray{T,2},
     τxy::AbstractArray{T,2},
@@ -73,10 +74,10 @@ export solve!
     _dx::T,
     _dy::T,
 ) where {T}
-    @all(dVx) = (@d_xi(τxx) * _dx + @d_ya(τxy) * _dy - @d_xi(P) * _dx) * @harm_xi(dτ_Rho)
-    @all(dVy) =
-        (@d_yi(τyy) * _dy + @d_xa(τxy) * _dx - @d_yi(P) * _dy - @harm_yi(ρg)) *
-        @harm_yi(dτ_Rho)
+    @all(Rx) = (@d_xi(τxx) * _dx + @d_ya(τxy) * _dy - @d_xi(P) * _dx)
+    @all(Ry) = (@d_yi(τyy) * _dy + @d_xa(τxy) * _dx - @d_yi(P) * _dy - @av_yi(ρg))
+    @all(dVx) = @all(Rx)* @av_xi(dτ_Rho)
+    @all(dVy) =  @all(Ry) * @av_yi(dτ_Rho)
     return nothing
 end
 
@@ -118,13 +119,13 @@ function update_τ_o!(stokes::StokesArrays{ViscoElastic,A,B,C,D,2}) where {A,B,C
 end
 
 macro Gr()
-    return esc(:(@all(Gdτ) / (G * dt)))
+    return esc(:(@all(Gdτ) / (@all(G) * dt)))
 end
 macro av_Gr()
-    return esc(:(@av(Gdτ) / (G * dt)))
+    return esc(:(@av(Gdτ) / (@av(G) * dt)))
 end
 macro harm_Gr()
-    return esc(:(@harm(Gdτ) / (G * dt)))
+    return esc(:(@harm(Gdτ) / (@harm(G) * dt)))
 end
 @parallel function compute_τ!(
     τxx::AbstractArray{T,2},
@@ -138,7 +139,7 @@ end
     εyy::AbstractArray{T,2},
     εxy::AbstractArray{T,2},
     η::AbstractArray{T,2},
-    G::T,
+    G::AbstractArray{T,2},
     dt::T,
 ) where {T}
     @all(τxx) =
@@ -152,7 +153,6 @@ end
         (one(T) + @harm(Gdτ) / @harm(η) + @harm_Gr())
     return nothing
 end
-
 
 ## 2D VISCO-ELASTIC STOKES SOLVER 
 

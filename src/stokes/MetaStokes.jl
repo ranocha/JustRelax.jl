@@ -184,7 +184,7 @@ function make_PTstokes_struct!()
             Gdτ::AbstractArray{T,nDim}
 
             function PTStokesCoeffs(
-                ni::NTuple{nDim,T}, di; ϵ=1e-8, Re=5π, CFL=0.9 / √2, r=1e0
+                ni::NTuple{nDim,T}, di; ϵ=1e-8, Re=5π, CFL=0.9 / √2, r=0.5
             ) where {nDim,T}
                 Vpdτ = min(di...) * CFL
                 Gdτ = @zeros(ni...)

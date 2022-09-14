@@ -74,8 +74,8 @@ end
     _dx::T,
     _dy::T,
 ) where {T}
-    @all(εxx) = @d_xa(Vx) * _dx
-    @all(εyy) = @d_ya(Vy) * _dy
+    @all(εxx) = @d_xa(Vx) * _dx - 1.0 / 3.0 * (@d_xa(Vx) * _dx + @d_ya(Vy) * _dy)
+    @all(εyy) = @d_ya(Vy) * _dy - 1.0 / 3.0 * (@d_xa(Vx) * _dx + @d_ya(Vy) * _dy)
     @all(εxy) = 0.5 * (@d_yi(Vx) * _dy + @d_xi(Vy) * _dx)
     return nothing
 end
