@@ -151,6 +151,9 @@ end
     @all(τxy) =
         (@all(τxy) + @all(τxy_o) * @harm_Gr() + T(2) * @harm(Gdτ) * @all(εxy)) /
         (one(T) + @harm(Gdτ) / @harm(η) + @harm_Gr())
+    # @all(τxy) =
+    #     (@all(τxy) + @all(τxy_o) * @harm_Gr() + T(2) * @harm(Gdτ) * @all(εxy)) /
+    #     (one(T) + @harm(Gdτ) / @av(η) + @harm_Gr())
     return nothing
 end
 
@@ -217,7 +220,9 @@ function JustRelax.solve!(
             @parallel compute_τ!(
                 τxx, τyy, τxy, τxx_o, τyy_o, τxy_o, Gdτ, εxx, εyy, εxy, η, G, dt
             )
-            @parallel compute_dV_elastic!(dVx, dVy, P, τxx, τyy, τxy, dτ_Rho, ρg, _dx, _dy)
+            @parallel JustRelax.Elasticity2D.compute_dV_elastic!(
+                dVx, dVy, P, Rx, Ry, τxx, τyy, τxy, dτ_Rho, ρg, _dx, _dy
+            )
             @parallel compute_V!(Vx, Vy, dVx, dVy)
 
             # free slip boundary conditions

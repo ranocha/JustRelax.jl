@@ -50,7 +50,7 @@ end
 @parallel_indices (i, j) function viscoelastic_viscosity!(ηve, MatParam, G, phase, dt)
     ηve[i, j] = inv(
         inv(G[i, j] * dt) +
-        inv(computeViscosity_τII(MatParam, 0.0, phase[i, j], (;); cutoff=(-Inf, Inf))),
+        inv(0.5*computeViscosity_τII(MatParam, 0.0, phase[i, j], (;); cutoff=(-Inf, Inf))),
     )
     return nothing
 end
@@ -58,7 +58,7 @@ end
 @parallel_indices (i, j) function pt_viscosity!(ηpt, MatParam, G, Gdτ, phase, dt)
     ηpt[i, j] = inv(
         inv(G[i, j] * dt) +
-        inv(computeViscosity_τII(MatParam, 0.0, phase[i, j], (;); cutoff=(-Inf, Inf))) + 
+        inv(0.5*computeViscosity_τII(MatParam, 0.0, phase[i, j], (;); cutoff=(-Inf, Inf))) + 
         inv(Gdτ[i,j])
     )
     return nothing
@@ -874,3 +874,4 @@ end
 f, ax, h = heatmap(xvi[1], xvi[2], τxx)
 # f, ax, h = heatmap(xvi[1], xvi[2], τyy)
 # f, ax, h = heatmap(xvi[1], xvi[2], τxy)
+

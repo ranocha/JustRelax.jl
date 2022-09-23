@@ -1,5 +1,5 @@
 # include benchmark related functions
-include("vizSolVi.jl")
+# include("vizSolVi.jl")
 
 function _viscosity!(η, xci, yci, rc, ηi, cx, cy)
     for i in 1:length(xci), j in 1:length(yci)
@@ -39,6 +39,15 @@ function solvi_viscosity(ni, di, li, rc, η0, ηi)
     return η
 end
 
+Δη = 1e0
+nx = 128 # 51
+ny = 128 # 51
+lx = 4e3
+ly = 2e3
+rc = 2e2
+εbg = 1e0
+Δε = 5e-5
+
 function solViEl(; Δη=1e-3, nx=256 - 1, ny=256 - 1, lx=1e1, ly=1e1, rc=1e0, εbg=1e0)
     ## Spatial domain: This object represents a rectangular domain decomposed into a Cartesian product of cells
     # Here, we only explicitly store local sizes, but for some applications
@@ -60,15 +69,19 @@ function solViEl(; Δη=1e-3, nx=256 - 1, ny=256 - 1, lx=1e1, ly=1e1, rc=1e0, ε
     # general stokes arrays
     stokes = StokesArrays(ni, ViscoElastic)
     # general numerical coeffs for PT stokes
-    pt_stokes = PTStokesCoeffs(ni, di; CFL = 0.1 * 0.9 / √(2))
+    pt_stokes = PTStokesCoeffs(ni, di; CFL = 1e-1 * 0.9 / √(2))
+
+    dt = 1e10
+    εbg = Δε/dt
 
     ## Setup-specific parameters and fields
-    η0 = 1e0  # matrix viscosity
-    ηi = Δη # inclusion viscosity
+    η0 = 1e20  # matrix viscosity
+    ηi = 1e19 # inclusion viscosity
     η = solvi_viscosity(ni, di, li, rc, η0, ηi) # viscosity field
     ξ = 1.0         # Maxwell relaxation time
-    G = @ones(ni...)         # elastic shear modulus
-    dt = η0 / (maximum(G) * ξ)
+    G = solvi_viscosity(ni, di, li, rc, 1e10, 2.5e9) # viscosity field
+
+    # dt = η0 / (maximum(G) * ξ)
 
     ## Boundary conditions
     pureshear_bc!(stokes, di, li, εbg)
@@ -78,18 +91,32 @@ function solViEl(; Δη=1e-3, nx=256 - 1, ny=256 - 1, lx=1e1, ly=1e1, rc=1e0, ε
     t = 0.0
     ρ = @zeros(ni...)
     local iters
-    while t < ttot
+    # while t < ttot
         iters = solve!(
-            stokes, pt_stokes, di, li, max_li, freeslip, ρ, η, G, dt; iterMax=10e3
+            stokes, pt_stokes, di, li, max_li, freeslip, ρ, η, G, dt; iterMax=150e3
         )
         t += Δt
-    end
+    # end
 
     return (ni=ni, xci=xci, xvi=xvi, li=li, di=di), stokes, iters
 end
 
-heatmap(xvi[1], xvi[2], stokes.τ.xx; colormap=:batlow)
+f,ax,h=heatmap(xvi[1], xvi[2], stokes.τ.xx; colormap=:batlow)
+Colorbar(f[1,2], h)
+f
 
+f,ax,h=heatmap(xvi[1], xvi[2], stokes.V.Vx; colormap=:batlow)
+Colorbar(f[1,2], h)
+f
+
+
+f,ax,h=heatmap(xvi[1], xvi[2], (η); colormap=:batlow)
+Colorbar(f[1,2], h)
+f
+
+f,ax,h=heatmap(xvi[1], xvi[2], stokes.V.Vx; colormap=:batlow)
+Colorbar(f[1,2], h)
+f
 function multiple_solViEl(; Δη=1e-3, lx=1e1, ly=1e1, rc=1e0, εbg=1e0, nrange::UnitRange=4:8)
     L2_vx, L2_vy, L2_p = Float64[], Float64[], Float64[]
     for i in nrange
