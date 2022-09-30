@@ -178,64 +178,10 @@ end
     return nothing
 end
 
-# @parallel_indices (i,j) function plasticity!(
-#     ηvp, τxx, τyy, τxy, λ, Pl, εxx, εyy, εxy, τxx_o, τyy_o, τxy_o, ηve, P, phase, MatParam, G, dt
-# )
-#     τxx[i, j], τyy[i, j], τxy[i, j], ηvp[i, j], λ[i,j], Pl[i,j] = local_plasticity(
-#         τxx[i, j],
-#         τyy[i, j],
-#         τxy[i, j],
-#         εxx[i, j],
-#         εyy[i, j],
-#         εxy[i, j],
-#         τxx_o[i, j],
-#         τyy_o[i, j],
-#         τxy_o[i, j],
-#         G[i,j],
-#         ηve[i, j],
-#         P[i, j],
-#         phase[i,j],
-#         MatParam,
-#         dt
-#     )
-#     return nothing
-# end
-
-# function local_plasticity(τxx, τyy, τxy, εxx, εyy, εxy, τxx_o, τyy_o, τxy_o, G, η_ve, P, phase, MatParam, dt)
-#     η_rg = 0.5e-1*0.0
-#     # trial strain6
-#     εxx_trial = εxx + τxx_o * 0.5 * inv(G * dt) # η_e = G*dt
-#     εyy_trial = εyy + τyy_o * 0.5 * inv(G * dt)
-#     εxy_trial = εxy + τxy_o * 0.5 * inv(G * dt)
-#     εII = second_invariant(εxx_trial, εyy_trial, εxy_trial)
-#     # trial stress
-#     τxx_trial = 2.0 * εxx_trial * η_ve
-#     τyy_trial = 2.0 * εyy_trial * η_ve
-#     τxy_trial = 2.0 * εxy_trial * η_ve
-#     τII_trial = second_invariant(τxx_trial, τyy_trial, τxy_trial)
-#     # yield function
-#     F = compute_yieldfunction(MatParam, phase, (P=P, τII=τII_trial)) - η_rg
-#     λ = 0.0
-#     if F > 0.0
-#         λ = F / (η_ve + η_rg/dt)
-#         ∂Q∂τxx, ∂Q∂τyy, ∂Q∂τxy = compute_plasticpotential(
-#             MatParam, phase, (τxx_trial, τyy_trial, τxy_trial)
-#         )
-#         # stress correction
-#         τxx = 2.0 * η_ve * (εxx_trial - λ * ∂Q∂τxx)
-#         τyy = 2.0 * η_ve * (εyy_trial - λ * ∂Q∂τyy)
-#         τxy = 2.0 * η_ve * (εxy_trial - 0.5 * λ * ∂Q∂τxy)
-#     end
-#     τII = second_invariant(τxx, τyy, τxy)
-#     ηvep = 0.5 * τII / εII
-#     Pl = λ == 0.0 ? 1.0 : 0.0
-#     return τxx, τyy, τxy, ηvep, λ, Pl
-# end
-
-
 @parallel_indices (i,j) function plasticity!(
-    ηvp, τxx, τyy, τxy, λ, εxx, εyy, εxy, τxx_o, τyy_o, τxy_o, ηve, ηpt, P, phase, MatParam, G, Gdτ, dt, ηrg
+    ηvp, τxx, τyy, τxy, λ, εxx, εyy, εxy, τxx_o, τyy_o, τxy_o, ηve, ηpt, P, phase, MatParam, G, Gdτ, dt, ηrg, C
 )
+
     τxx[i, j], τyy[i, j], τxy[i, j], ηvp[i, j], λ[i,j]= pt_plasticity_kernel(
         τxx[i, j],
         τyy[i, j],
@@ -255,12 +201,14 @@ end
         phase[i,j],
         MatParam,
         dt,
-        ηrg
+        ηrg,
+        C[i,j]
     )
+
     return nothing
 end
 
-function pt_plasticity_kernel(τxx, τyy, τxy, εxx, εyy, εxy, τxx_o, τyy_o, τxy_o, λ, G, Gdτ, ηve, ηpt, P, phase, MatParam, dt, ηrg)
+function pt_plasticity_kernel(τxx, τyy, τxy, εxx, εyy, εxy, τxx_o, τyy_o, τxy_o, λ, G, Gdτ, ηve, ηpt, P, phase, MatParam, dt, ηrg, C)
     # trial strain
     εxx_trial = εxx + τxx_o * 0.5 * inv(G * dt) + τxx * 0.5 * inv(Gdτ)
     εyy_trial = εyy + τyy_o * 0.5 * inv(G * dt) + τyy * 0.5 * inv(Gdτ)
@@ -272,7 +220,8 @@ function pt_plasticity_kernel(τxx, τyy, τxy, εxx, εyy, εxy, τxx_o, τyy_o
     τxy = 2.0 * εxy_trial * ηpt
     τII = second_invariant(τxx, τyy, τxy)
     # yield function
-    F = compute_yieldfunction(MatParam, phase, (P=P, τII=τII)) - λ * ηrg
+    # F = compute_yieldfunction(MatParam, phase, (P=P, τII=τII)) - λ * ηrg
+    F = τII - P * sind(30) - C * cosd(30) - λ * ηrg
     λ = 0.0
     # ηvep = ηve
     ηvep = ηpt
@@ -289,6 +238,57 @@ function pt_plasticity_kernel(τxx, τyy, τxy, εxx, εyy, εxy, τxx_o, τyy_o
     end
     # τII = second_invariant(τxx, τyy, τxy)
     return τxx, τyy, τxy, ηvep, λ
+end
+
+function plastic_strain(εvp::Number, τxx::Number, τyy::Number, τxy::Number, λ::Number, MatParam, phase, dt)
+    τII = second_invariant(τxx, τyy, τxy)
+    ∂Q∂τxx, ∂Q∂τyy, ∂Q∂τxy = compute_plasticpotentialDerivative(
+        MatParam, phase, (τxx, τyy, τxy)
+    )
+    h = (2.0/(3.0*τII))*(∂Q∂τxx^2 + ∂Q∂τyy^2 + ∂Q∂τxy^2) * λ^2 # (λ*∂Q∂τᵀ) ⋅ (λ*∂Q∂τ)
+    εvp += √h * dt
+    return εvp
+end
+
+@parallel_indices (i, j) function plastic_strain!(εvp::AbstractArray{T, 2}, τxx::AbstractArray{T, 2}, τyy::AbstractArray{T, 2}, τxy::AbstractArray{T, 2}, λ::AbstractArray{T, 2}, MatParam, phase, dt) where T
+    εvp[i,j] = plastic_strain(εvp[i,j], τxx[i,j], τyy[i,j], τxy[i,j], λ[i,j], MatParam, phase[i,j], dt)
+    return 
+end
+
+# @parallel function softening!(C, εvp, Δ, μ, σ)
+#     @all(C) = @all(C) - 0.5 * Δ * erf((μ - @all(εvp)) / σ) 
+# end
+
+@parallel function softening!(C::AbstractArray, C0::AbstractArray, λ::AbstractArray, h::AbstractArray, Cmin, dt)
+    @all(C) = max(@all(C0) - dt * √(2.0/3.0) * @all(λ) * @all(h), Cmin * 0.5)
+    return nothing
+end
+
+@parallel_indices (i, j) function plastic_iter_params!(
+    dτ_Rho::AbstractArray,
+    Gdτ::AbstractArray,
+    ητ::AbstractArray,
+    ηvp::AbstractArray,
+    λ::AbstractArray,
+    Vpdτ::T,
+    G::AbstractArray,
+    dt::M,
+    Re::T,
+    r::T,
+    max_li::T,
+
+) where {T,M}
+
+    if λ[i,j] == 0.0 
+        dτ_Rho[i,j] =
+            Vpdτ * max_li / (Re * (one(T) / (one(T) / ητ[i,j] + one(T) / (G[i,j] * dt))))
+    else
+        dτ_Rho[i,j] =
+            # Vpdτ * max_li / (Re * (one(T) / (one(T) / ηvp[i,j] + one(T) / (G[i,j] * dt))))
+            Vpdτ * max_li / (Re * ηvp[i,j])
+    end
+    Gdτ[i,j] = Vpdτ^2 / (dτ_Rho[i,j] * (r + T(2.0)))
+    return nothing
 end
 
 Δη = 1e-3
@@ -346,7 +346,7 @@ function solVi(ηrg; Δη=1e-3, nx=256 - 1, ny=256 - 1, lx=1e1, ly=1e1, rc=1e0, 
 
     stokes = StokesArrays(ni, ViscoElastic)
     # general numerical coeffs for PT stokes
-    pt_stokes = PTStokesCoeffs(ni, di; CFL = 0.1 * 0.9/sqrt(2))
+    pt_stokes = PTStokesCoeffs(ni, di; CFL = 0.75 * 0.9/sqrt(2))
 
     ## Setup-specific parameters and fields
     ξ = 4.0         # Maxwell relaxation time
@@ -376,6 +376,11 @@ function solVi(ηrg; Δη=1e-3, nx=256 - 1, ny=256 - 1, lx=1e1, ly=1e1, rc=1e0, 
     # stokes.V.Vx .= [-εbg * x for x in xvi[1], y in xci[2]]
     # stokes.V.Vy .= [εbg * y for x in xci[1], y in xvi[2]]
     freeslip = (freeslip_x=true, freeslip_y=true)
+
+    Ci = @fill(10e6, ni...)
+    C0 = @fill(10e6, ni...)
+    Cmin = 5e6
+    h = @fill(2e1, ni...)
 
     ###
     # unpack
@@ -408,7 +413,7 @@ function solVi(ηrg; Δη=1e-3, nx=256 - 1, ny=256 - 1, lx=1e1, ly=1e1, rc=1e0, 
     t = 0.0
     ρ = @zeros(ni...)
 
-    iterMax = 150e3
+    iterMax = 500e3
     ϵ = 1e-6
     nout = 100
  
@@ -424,17 +429,22 @@ function solVi(ηrg; Δη=1e-3, nx=256 - 1, ny=256 - 1, lx=1e1, ly=1e1, rc=1e0, 
     t = 0.0
     evo_t = Float64[]
     ητ = deepcopy(η)
+    ητ_vp = deepcopy(ηvp)
 
-    for _ in 1:20
+    for _ in 1:30
         JustRelax.Elasticity2D.update_τ_o!(stokes)
         @parallel idxs c2v!(τxy_ov, τxy_o, ni...)
         @parallel idxs pt_viscosity!(ηpt, MatParam, G, Gdτ, phase, dt)
 
         # ~preconditioner
         @parallel JustRelax.compute_maxloc!(ητ, η)
+        @parallel JustRelax.compute_maxloc!(ητ_vp, ηvp)
         # PT numerical coefficients
-        @parallel JustRelax.Elasticity2D.elastic_iter_params!(
-            dτ_Rho, Gdτ, ητ, Vpdτ, G, dt, Re, r, max_li
+        # @parallel JustRelax.Elasticity2D.elastic_iter_params!(
+        #     dτ_Rho, Gdτ, ητ, Vpdτ, G, dt, Re, r, max_li
+        # )
+        @parallel idxs plastic_iter_params!(
+            dτ_Rho, Gdτ, ητ, ητ_vp, λ, Vpdτ, G, dt, Re, r, max_li
         )
         # errors
         err = 2 * ϵ
@@ -443,17 +453,25 @@ function solVi(ηrg; Δη=1e-3, nx=256 - 1, ny=256 - 1, lx=1e1, ly=1e1, rc=1e0, 
 
         # solver loop
         iter = 1
+        C0 .= Ci
+        @show extrema(C0)
         while err > ϵ && iter ≤ iterMax
 
             #### PT PLASTIC ITERATIONS #########################################
+            @parallel softening!(Ci, C0, λ, h, Cmin, dt)
             @parallel JustRelax.Stokes2D.compute_strain_rate!(εxx, εyy, εxy, Vx, Vy, _dx, _dy)
             @parallel idxs c2v!(εxyv, εxy, ni...)
             @parallel JustRelax.Stokes2D.compute_P!(∇V, P, εxx, εyy, Gdτ, r)
             @parallel idxs plasticity!(
-                ηvp, τxx, τyy, τxyv, λ, εxx, εyy, εxyv, τxx_o, τyy_o, τxy_ov, ηve, ηpt, P, phase, MatParam, G, Gdτ, dt, ηrg
+                ηvp, τxx, τyy, τxyv, λ, εxx, εyy, εxyv, τxx_o, τyy_o, τxy_ov, ηve, ηpt, P, phase, MatParam, G, Gdτ, dt, ηrg, Ci
             )
             # vertex2center!(ηvpc, ηvp)
             @parallel correct_shear_stress!(τxy, τxy_o, Gdτ, εxy, ηvp, G, dt)
+
+            @parallel JustRelax.compute_maxloc!(ητ_vp, ηvp)
+            @parallel idxs plastic_iter_params!(
+                dτ_Rho, Gdτ, ητ, ητ_vp, λ, Vpdτ, G, dt, Re, r, max_li
+            )
             @parallel JustRelax.Elasticity2D.compute_dV_elastic!(
                 dVx, dVy, P, Rx, Ry, τxx, τyy, τxy, dτ_Rho, ρ, _dx, _dy
             )
@@ -474,13 +492,14 @@ function solVi(ηrg; Δη=1e-3, nx=256 - 1, ny=256 - 1, lx=1e1, ly=1e1, rc=1e0, 
 
             # free slip boundary conditions
             apply_free_slip!(freeslip, Vx, Vy)
-
             # @parallel JustRelax.compute_maxloc!(ητ, ηvp)
             # # PT numerical coefficients
-            # @parallel JustRelax.Elasticity2D.elastic_iter_params!(
-            #     dτ_Rho, Gdτ, ητ, Vpdτ, G, dt, Re, r, max_li
-            # )
-
+            @parallel JustRelax.Elasticity2D.elastic_iter_params!(
+                dτ_Rho, Gdτ, ητ, Vpdτ, G, dt, Re, r, max_li
+            )
+                
+            heatmap(xvi[1],xvi[2], τxx, colormap=:batlow)
+                
             iter += 1
             if iter % nout == 0 && iter > 1
                 cont += 1
@@ -521,12 +540,15 @@ function solVi(ηrg; Δη=1e-3, nx=256 - 1, ny=256 - 1, lx=1e1, ly=1e1, rc=1e0, 
         push!(evo_Txx, max_Txx)
         push!(evo_t, t)
         println("Maximum τxx = $(max_Txx*1e-6) MPa")
-        # @show maximum(λ)
+        @show maximum(λ)
+        maximum(λ) != 0.0 && break
     end
 
     εII = @. sqrt(0.5*(εxx^2 + εyy^2) + εxyv^2)
     # f, ax, h = heatmap(xvi[1], xvi[2], τxx; colormap=:batlow)
     # Colorbar(f[1, 2], h)
+
+
     # f
 
     return evo_Txx, evo_t, (ni=ni, xci=xci, xvi=xvi, li=li, di=di), stokes, εII
@@ -534,16 +556,15 @@ function solVi(ηrg; Δη=1e-3, nx=256 - 1, ny=256 - 1, lx=1e1, ly=1e1, rc=1e0, 
     # return (ni=ni, xci=xci, xvi=xvi, li=li, di=di), stokes, iters
 end
 
-
 Δη = 1e-3
-nx = 101
-ny = 101
+nx = 62 * 2
+ny = 31 * 2
 lx = 4e3
 ly = 2e3
-rc = 2e2
+rc = 1e2
 εbg = 1e0
 Δε = 5e-5
-ηrg = 1e18
+ηrg = 1e19
 
 evo_Txx, evo_t, geometry, stokes, εII = solVi(ηrg; Δη=1e-3, nx=nx, ny=ny, lx=lx, ly=ly, rc=rc, εbg=εbg);
 # f

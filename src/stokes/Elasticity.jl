@@ -17,8 +17,8 @@ end
     r::T,
     max_li::T,
 ) where {T,M}
-    @all(dτ_Rho) = Vpdτ * max_li / Re / (one(T) / (one(T) / @all(ητ) + one(T) / (G * dt)))
-    @all(Gdτ) = Vpdτ^2 / @all(dτ_Rho) / (r + T(2.0))
+    @all(dτ_Rho) = Vpdτ * max_li / (Re * (one(T) / (one(T) / @all(ητ) + one(T) / (G * dt))))
+    @all(Gdτ) = Vpdτ^2 / (@all(dτ_Rho) * (r + T(2.0)))
     return nothing
 end
 
@@ -36,6 +36,31 @@ end
     @all(dτ_Rho) =
         Vpdτ * max_li / (Re * (one(T) / (one(T) / @all(ητ) + one(T) / (@all(G) * dt))))
     @all(Gdτ) = Vpdτ^2 / (@all(dτ_Rho) * (r + T(2.0)))
+    return nothing
+end
+
+@parallel_indices (i, j) function plastic_iter_params!(
+    dτ_Rho::AbstractArray,
+    Gdτ::AbstractArray,
+    ητ::AbstractArray,
+    ηvp::AbstractArray,
+    λ::AbstractArray,
+    Vpdτ::T,
+    G::AbstractArray,
+    dt::M,
+    Re::T,
+    r::T,
+    max_li::T,
+) where {T,M}
+
+    if λ[i,j] != 0.0 
+        dτ_Rho[i,j] =
+            Vpdτ * max_li / (Re * (one(T) / (one(T) / ητ[i,j] + one(T) / (G[i,j] * dt))))
+    else
+        dτ_Rho[i,j] =
+            Vpdτ * max_li / (Re * ηvp[i,j])
+    end
+    Gdτ[i,j] = Vpdτ^2 / (dτ_Rho[i,j] * (r + T(2.0)))
     return nothing
 end
 

@@ -21,8 +21,8 @@ end
     r::Real,
     max_lxy::Real,
 ) where {T}
-    @all(dτ_Rho) = Vpdτ * max_lxy / Re / @all(ητ)
-    @all(Gdτ) = Vpdτ^2 / @all(dτ_Rho) / (r + 2.0)
+    @all(dτ_Rho) = Vpdτ * max_lxy / (Re * @all(ητ))
+    @all(Gdτ) = Vpdτ^2 / (@all(dτ_Rho) * (r + 2.0))
     return nothing
 end
 
