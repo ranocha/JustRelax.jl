@@ -6,7 +6,7 @@ using MPI
     elseif z[k] == minimum(z)
         T[i, j, k] = 3500.0
     else
-        T[i, j, k] = z[k] * (1900.0 - 1600.0) / minimum(z) + 1600.0
+        T[i, j, k] = 1900.0
     end
     return nothing
 end
@@ -18,22 +18,20 @@ function diffusion_3D(;
     lx=100e3,
     ly=100e3,
     lz=100e3,
-    ρ=3.3e3,
-    Cp=1.2e3,
-    K=3.0,
+    ρ0=3.3e3,
+    Cp0=1.2e3,
+    K0=3.0,
     init_MPI=MPI.Initialized() ? false : true,
     finalize_MPI=false,
 )
-    kyr = 1e3 * 3600 * 24 * 365.25
     Myr = 1e6 * 3600 * 24 * 365.25
     ttot = 10 * Myr # total simulation time
-    dt = 50 * kyr # physical time step
 
     # Physical domain
     ni = (nx, ny, nz)
     li = (lx, ly, lz)  # domain length in x- and y-
-    di = @. li / ni # grid step in x- and -y
-    xci, = lazy_grid(di, li; origin=(0, 0, -lz)) # nodes at the center and vertices of the cells
+    di = @. li / (ni-1) # grid step in x- and -y
+    xci, xvi = lazy_grid(di, li; origin=(0, 0, -lz)) # nodes at the center and vertices of the cells
 
     igg = IGG(init_global_grid(nx, ny, nz; init_MPI=init_MPI)...) # init MPI
 
@@ -42,44 +40,41 @@ function diffusion_3D(;
     thermal = ThermalArrays(ni)
 
     # physical parameters
-    ρ = @fill(ρ, ni...)
-    Cp = @fill(Cp, ni...)
-    K = @fill(K, ni...)
+    κ = K0/(ρ0*Cp0)
+    ρ = @fill(ρ0, ni...)
+    Cp = @fill(Cp0, ni...)
+    K = @fill(K0, ni...)
     ρCp = @. Cp * ρ
     thermal_parameters = ThermalParameters(K, ρCp)
 
     # Boundary conditions
-    pt_thermal = PTThermalCoeffs(K, ρCp, dt, di, li)
     thermal_bc = (frontal=true, lateral=true)
 
-    @parallel (1:nx, 1:ny, 1:nz) init_T!(thermal.T, xci[3])
+    @parallel (1:nx, 1:ny, 1:nz) init_T!(thermal.T, xvi[3])
     @parallel assign!(thermal.Told, thermal.T)
+
+    dt = 0.5 / 4.1 * min(di...)^2 / κ
 
     t = 0.0
     it = 0
     nt = Int(ceil(ttot / dt))
 
     # Physical time loop
-    local iters
+    scatter(thermal.T[:], Z)
     while it < nt
-        iters = solve!(
+        solve!(
             thermal,
-            pt_thermal,
             thermal_parameters,
             thermal_bc,
-            ni,
             di,
-            igg,
-            dt;
-            iterMax=10e3,
-            nout=1,
-            verbose=false,
+            dt
         )
         t += dt
         it += 1
+        scatter!(thermal.T[:], Z)
     end
 
     finalize_global_grid(; finalize_MPI=finalize_MPI)
 
-    return (ni=ni, xci=xci, li=li, di=di), thermal, iters
+    return (ni=ni, xci=xci, xvi=xvi, li=li, di=di), thermal.T
 end
