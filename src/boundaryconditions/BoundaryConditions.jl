@@ -1,3 +1,28 @@
+# 1D KERNELS
+
+@parallel_indices (iy) function free_slip!(A::AbstractVector{eltype(PTArray)})
+    A[1] = A[2]
+    A[end] = A[end - 1]
+    return nothing
+end
+
+function apply_free_slip!(freeslip::NamedTuple{<:Any,NTuple{2,T}}, Vx) where {T}
+    freeslip_x, = freeslip
+    # free slip boundary conditions
+    freeslip_x && (@parallel (1:length(Vx)) free_slip!(Vx))
+
+    return nothing
+end
+
+function thermal_boundary_conditions!(
+    insulation::NamedTuple, T::AbstractVector{_T}
+) where {_T}
+    insulation_x, = insulation
+    insulation_x && (@parallel (1:length(T)) free_slip!(T))
+
+    return nothing
+end
+
 # 2D KERNELS
 
 function pureshear_bc!(
@@ -17,7 +42,6 @@ function pureshear_bc!(
 end
 
 @parallel_indices (iy) function free_slip_x!(A::AbstractArray{eltype(PTArray),2})
-    <
     A[1, iy] = A[2, iy]
     A[end, iy] = A[end - 1, iy]
     return nothing
