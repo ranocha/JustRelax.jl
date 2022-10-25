@@ -18,15 +18,7 @@ if dimension === 3
 
     # start model
     geometry, T = diffusion_3D(;
-        nx=nx,
-        ny=ny,
-        nz=nz,
-        lx=L,
-        ly=L,
-        lz=L,
-        ρ0=3.3e3,
-        Cp0=1.2e3,
-        K0=3.0,
+        nx=nx, ny=ny, nz=nz, lx=L, ly=L, lz=L, ρ0=3.3e3, Cp0=1.2e3, K0=3.0
     )
 
 elseif dimension == 2
@@ -37,9 +29,7 @@ elseif dimension == 2
     nx, ny = 64, 64
 
     # start model
-    geometry, T = diffusion_2D(;
-        nx=nx, ny=ny, lx=L, ly=L, ρ0=3.3e3, Cp0=1.2e3, K0=3.0
-    )
+    geometry, T = diffusion_2D(; nx=nx, ny=ny, lx=L, ly=L, ρ0=3.3e3, Cp0=1.2e3, K0=3.0)
 
 elseif dimension == 1
     # include model setup

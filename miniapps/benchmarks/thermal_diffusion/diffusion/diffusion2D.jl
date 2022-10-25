@@ -16,7 +16,7 @@ function diffusion_2D(; nx=32, ny=32, lx=100e3, ly=100e3, ρ0=3.3e3, Cp0=1.2e3, 
     # Physical domain
     ni = (nx, ny)
     li = (lx, ly)  # domain length in x- and y-
-    di = @. li / (ni-1) # grid step in x- and -y
+    di = @. li / (ni - 1) # grid step in x- and -y
     xci, xvi = lazy_grid(di, li; origin=(0, -ly)) # nodes at the center and vertices of the cells
 
     ## Allocate arrays needed for every Thermal Diffusion
@@ -24,7 +24,7 @@ function diffusion_2D(; nx=32, ny=32, lx=100e3, ly=100e3, ρ0=3.3e3, Cp0=1.2e3, 
     thermal = ThermalArrays(ni)
 
     # physical parameters
-    κ = K0/(ρ0*Cp0)
+    κ = K0 / (ρ0 * Cp0)
     ρ = @fill(ρ0, ni...)
     Cp = @fill(Cp0, ni...)
     K = @fill(K0, ni...)
@@ -42,13 +42,7 @@ function diffusion_2D(; nx=32, ny=32, lx=100e3, ly=100e3, ρ0=3.3e3, Cp0=1.2e3, 
     nt = Int(ceil(ttot / dt))
     # Physical time loop
     while it < nt
-        solve!(
-            thermal,
-            thermal_parameters,
-            thermal_bc,
-            di,
-            dt
-        )
+        solve!(thermal, thermal_parameters, thermal_bc, di, dt)
         it += 1
         t += dt
     end

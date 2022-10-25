@@ -462,7 +462,7 @@ function JustRelax.solve!(
 
     # Compute some constant stuff
     _dx, _dy, _dz = inv.(di)
-    
+
     @parallel assign!(thermal.Told, thermal.T)
     @parallel compute_flux!(
         thermal.qTx,

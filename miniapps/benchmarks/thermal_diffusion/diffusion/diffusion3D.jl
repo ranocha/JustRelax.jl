@@ -30,7 +30,7 @@ function diffusion_3D(;
     # Physical domain
     ni = (nx, ny, nz)
     li = (lx, ly, lz)  # domain length in x- and y-
-    di = @. li / (ni-1) # grid step in x- and -y
+    di = @. li / (ni - 1) # grid step in x- and -y
     xci, xvi = lazy_grid(di, li; origin=(0, 0, -lz)) # nodes at the center and vertices of the cells
 
     igg = IGG(init_global_grid(nx, ny, nz; init_MPI=init_MPI)...) # init MPI
@@ -40,7 +40,7 @@ function diffusion_3D(;
     thermal = ThermalArrays(ni)
 
     # physical parameters
-    κ = K0/(ρ0*Cp0)
+    κ = K0 / (ρ0 * Cp0)
     ρ = @fill(ρ0, ni...)
     Cp = @fill(Cp0, ni...)
     K = @fill(K0, ni...)
@@ -62,13 +62,7 @@ function diffusion_3D(;
     # Physical time loop
     scatter(thermal.T[:], Z)
     while it < nt
-        solve!(
-            thermal,
-            thermal_parameters,
-            thermal_bc,
-            di,
-            dt
-        )
+        solve!(thermal, thermal_parameters, thermal_bc, di, dt)
         t += dt
         it += 1
         scatter!(thermal.T[:], Z)
