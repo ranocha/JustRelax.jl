@@ -425,7 +425,7 @@ function JustRelax.solve!(
 ) where {_T,M<:AbstractArray{<:Any,3}}
 
     # Compute some constant stuff
-    _dx, _dy = inv.(di)
+    _dx, _dy, _dz = inv.(di)
 
     @parallel assign!(thermal.Told, thermal.T)
     @parallel compute_flux!(
@@ -461,8 +461,8 @@ function JustRelax.solve!(
 ) where {_T,M<:AbstractArray{<:Any,3}}
 
     # Compute some constant stuff
-    _dx, _dy = inv.(di)
-
+    _dx, _dy, _dz = inv.(di)
+    
     @parallel assign!(thermal.Told, thermal.T)
     @parallel compute_flux!(
         thermal.qTx,
