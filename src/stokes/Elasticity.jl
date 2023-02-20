@@ -252,7 +252,7 @@ end
     εxyv,
     η,
     η_vep,
-    z,
+    args_η,
     T,
     MatParam,
     dt,
@@ -262,13 +262,13 @@ end
     @inline gather(A) = A[i, j], A[i + 1, j], A[i, j + 1], A[i + 1, j + 1] 
     @inline av(T)     = (T[i, j] + T[i + 1, j] + T[i, j + 1] + T[i + 1, j + 1]) * 0.25
 
-    @inline begin
+    @inbounds begin
         # # numerics
         # dτ_r                = 1.0 / (θ_dτ + η[i, j] / (get_G(MatParam[1]) * dt) + 1.0) # original
-        @inbounds dτ_r                = 1.0 / (θ_dτ / η[i, j] + 1.0 / η_vep[i, j]) # equivalent to dτ_r = @. 1.0/(θ_dτ + η/(G*dt) + 1.0)
+        dτ_r                = 1.0 / (θ_dτ / η[i, j] + 1.0 / η_vep[i, j]) # equivalent to dτ_r = @. 1.0/(θ_dτ + η/(G*dt) + 1.0)
         # # Setup up input for GeoParams.jl
-        args                = (; dt=dt, P = 1e6 * (1 - z[j]) , T=av(T), τII_old=0.0)
-        # args                = (; dt=dt, P=P[i, j] , T=av(T), τII_old=0.0)
+        # args                = (; dt=dt, P = 1e6 * (1 - z[j]) , T=av(T), τII_old=0.0)
+        args                = (; dt=dt, P = args_η.P[i, j] + 7.191237228154622e10, depth = abs(args_η.depth[j]), T=av(T), τII_old=0.0)
         εij_p               = εxx[i, j]+1e-25, εyy[i, j]+1e-25, gather(εxyv).+1e-25
         τij_p_o             = τxx_o[i,j], τyy_o[i,j], gather(τxyv_o)
         phases              = (1, 1, (1,1,1,1)) # for now hard-coded for a single phase
@@ -531,6 +531,7 @@ function JustRelax.solve!(
     ρg,
     η,
     η_vep,
+    args_η,
     MatParam::MaterialParams,
     dt;
     iterMax=10e3,
@@ -541,9 +542,9 @@ function JustRelax.solve!(
     # unpack
     _di = inv.(di)
     ϵ, r, θ_dτ, ηdτ = pt_stokes.ϵ, pt_stokes.r, pt_stokes.θ_dτ, pt_stokes.ηdτ
-    nx, ny = size(stokes.P)
+    ni = nx, ny = size(stokes.P)
     P_old = deepcopy(stokes.P)
-    z = LinRange(di[2]*0.5, 1.0-di[2]*0.5, ny)
+    # z = LinRange(di[2]*0.5, 1.0-di[2]*0.5, ny)
     # ~preconditioner
     ητ = deepcopy(η)
     @parallel compute_maxloc!(ητ, η)
@@ -581,11 +582,10 @@ function JustRelax.solve!(
                 stokes.ε.yy,
                 stokes.ε.xy,
                 stokes.∇V,
-                stokes.V.Vx,
-                stokes.V.Vy,
+                @tuple(stokes.V)...,
                 _di...,
             )
-            @parallel (1:nx, 1:ny) compute_τ_gp!(
+            @parallel (@idx ni) compute_τ_gp!(
                 stokes.τ.xx,
                 stokes.τ.yy,
                 stokes.τ.xy_c,
@@ -598,7 +598,7 @@ function JustRelax.solve!(
                 stokes.ε.xy,
                 η,
                 η_vep,
-                z,
+                args_η,
                 thermal.T,
                 tupleize(MatParam), # needs to be a tuple
                 dt,
@@ -606,8 +606,7 @@ function JustRelax.solve!(
             )
             @parallel center2vertex!(stokes.τ.xy, stokes.τ.xy_c)
             @parallel compute_V!(
-                stokes.V.Vx,
-                stokes.V.Vy,
+                @tuple(stokes.V)...,
                 stokes.P,
                 stokes.τ.xx,
                 stokes.τ.yy,
@@ -621,11 +620,12 @@ function JustRelax.solve!(
             # apply boundary conditions boundary conditions
             # apply_free_slip!(freeslip, stokes.V.Vx, stokes.V.Vy)
             flow_bcs!(stokes, flow_bcs, di)
+
         end
 
         iter += 1
         if iter % nout == 0 && iter > 1
-            @parallel (1:nx, 1:ny) compute_Res!(
+            @parallel (@idx ni) compute_Res!(
                 stokes.R.Rx,
                 stokes.R.Ry,
                 stokes.P,
@@ -658,7 +658,7 @@ function JustRelax.solve!(
 
     if -Inf < dt < Inf 
         update_τ_o!(stokes)
-        @parallel (1:nx, 1:ny) rotate_stress!(@tuple(stokes.V), @tuple(stokes.τ_o), _di, dt)
+        @parallel (@idx ni) rotate_stress!(@tuple(stokes.V), @tuple(stokes.τ_o), _di, dt)
     end
 
     return (
