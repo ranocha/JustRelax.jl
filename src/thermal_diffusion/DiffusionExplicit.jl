@@ -14,11 +14,11 @@ end
 
 ## GeoParams
 
-function compute_diffusivity(rheology::MaterialParams, args)
+@inline function compute_diffusivity(rheology::MaterialParams, args)
     return compute_conductivity(rheology, args) *
            inv(compute_heatcapacity(rheology, args) * compute_density(rheology, args))
 end
-function compute_diffusivity(rheology::MaterialParams, ρ::Number, args)
+@inline function compute_diffusivity(rheology::MaterialParams, ρ::Number, args)
     return compute_conductivity(rheology, args) *
            inv(compute_heatcapacity(rheology, args) * ρ)
 end
@@ -189,11 +189,11 @@ end
     i1, j1 = @add 1 i j # augment indices by 1
     
     if all((i,j).≤ size(qTx))
-        @inbounds qTx[i, j] = -compute_diffusivity(rheology, args) * (T[i1, j1] - T[i, j1]) * _dx
+        @inbounds qTx[i, j] = -compute_diffusivity(rheology, ntuple_idx(args, i, j)) * (T[i1, j1] - T[i, j1]) * _dx
     end
 
     if all((i,j).≤ size(qTy))
-        @inbounds qTy[i, j] = -compute_diffusivity(rheology, args) * (T[i1, j1] - T[i1, j]) * _dy
+        @inbounds qTy[i, j] = -compute_diffusivity(rheology, ntuple_idx(args, i, j)) * (T[i1, j1] - T[i1, j]) * _dy
     end
 
     return nothing
