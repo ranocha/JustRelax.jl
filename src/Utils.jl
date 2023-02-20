@@ -23,7 +23,7 @@ end
 @inline function compute_dt(V, di, dt_diff)
     n = inv(length(V) + 0.1)
     dt_adv =
-        mapreduce(x->x[1]/max(size(x[2])...), max, zip(di, V)) * n
+        mapreduce(x->x[1]/maximum(y->abs(y), x[2]), max, zip(di, V)) * n
     return min(dt_diff, dt_adv)
 end
 
