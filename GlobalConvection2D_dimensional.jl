@@ -1,4 +1,8 @@
 using JustRelax
+
+# needs this branch of GeoParams , uncomment line below to install it
+# using Pkg; Pkg.add(url="https://github.com/JuliaGeodynamics/GeoParams.jl"; rev="adm-arrhenius_dim")
+
 # setup ParallelStencil.jl environment
 model = PS_Setup(:gpu, Float64, 2)
 environment!(model)
@@ -70,7 +74,6 @@ _compute_gravity(v::MaterialParams) =  compute_gravity(v.Gravity[1])
 function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
 
     # Physical domain ------------------------------------
-    CharUnits = GEO_units(; viscosity=1e23, length=2890km, temperature=1000K)
     ly       = 2890e3
     lx       = ly * ar
     origin   = 0.0, -ly                         # origin coordinates
@@ -81,12 +84,12 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     # ----------------------------------------------------
 
     # Physical properties using GeoParams ----------------
-    η_reg     = 1e20
+    η_reg     = 1e19
     G0        = Inf                                                             # shear modulus
     cohesion  = 30e6
     pl        = DruckerPrager_regularised(; C = cohesion, ϕ=30.0, η_vp=η_reg, Ψ=0.0) # non-regularized plasticity
     el        = SetConstantElasticity(; G=G0, ν=0.5)                             # elastic spring
-    creep     = ArrheniusType2(; η0 = 5e20, T0=1600, Ea=100e3, Va=1.0e-6)       # Arrhenius-like (T-dependant) viscosity
+    creep     = ArrheniusType2(; η0 = 1e22, T0=1600, Ea=100e3, Va=1.0e-6)       # Arrhenius-like (T-dependant) viscosity
     # Define rheolgy struct
     rheology = SetMaterialParams(;
         Name              = "Mantle",
