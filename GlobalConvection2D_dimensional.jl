@@ -31,7 +31,7 @@ macro all_j(A)
     esc(:($A[$idx_j]))
 end
 
-@parallel function foo!(P, ρg, z)
+@parallel function init_P!(P, ρg, z)
     @all(P) = @all(ρg)*@all_j(z)
     return nothing
 end
