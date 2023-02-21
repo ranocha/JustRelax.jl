@@ -496,7 +496,6 @@ function JustRelax.solve!(
     b_width=(4, 4, 4),
     verbose=true,
 ) where {A,B,C,D,T}
-4444444444444444444324    
     # solver related
     ϵ = pt_stokes.ϵ
     # geometry
@@ -580,7 +579,6 @@ function JustRelax.solve!(
                 pt_stokes.θ_dτ,
             )
             @hide_communication b_width begin # communication/computation overlap
-                # (1:(nx + 1), 1:(ny + 1), 1:(nz + 1)) 
                 @parallel compute_V!(
                     stokes.V.Vx,
                     stokes.V.Vy,
@@ -589,9 +587,7 @@ function JustRelax.solve!(
                     stokes.R.Ry,
                     stokes.R.Rz,
                     stokes.P,
-                    ρg[1],
-                    ρg[2],
-                    ρg[3],
+                    ρg...,
                     stokes.τ.xx,
                     stokes.τ.yy,
                     stokes.τ.zz,
