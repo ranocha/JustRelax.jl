@@ -10,16 +10,10 @@ environment!(model)
 using Printf, LinearAlgebra, GeoParams, GLMakie, SpecialFunctions
 
 # HELPER FUNCTIONS ---------------------------------------------------------------
-@parallel function update_buoyancy!(fz, T, ρ0gα)
-    @all(fz) = ρ0gα * @all(T)
-    return nothing
-end
-
 @parallel_indices (i, j) function computeViscosity!(η, v, args)
 
     @inline av(T) = 0.25* (T[i,j] + T[i+1,j] + T[i,j+1] + T[i+1,j+1])
 
-    # @inbounds η[i, j] = computeViscosity_εII(v, 1.0, (; T = av(args.T), P=args.P[i, j]))
     @inbounds η[i, j] = computeViscosity_εII(v, 1.0, (; T = av(args.T), P=args.P[i, j], depth=abs(args.depth[j])))
 
     return nothing
@@ -38,16 +32,16 @@ end
 
 # Half-space-cooling model
 @parallel_indices (i, j) function init_T!(T, z, k, Tm, Tp, Tmin, Tmax)
-    yr          = 3600*24*365.25
-    dTdz = Tm-Tp
-    @inbounds zᵢ = abs(z[j])
-    Tᵢ          = Tp + dTdz*(zᵢ)
-    time        = 500e6 * yr
-    Ths         = Tmin + (Tm -Tmin) * erf((zᵢ)*0.5/(k*time)^0.5)
-    Tᵢ          = min(Tᵢ, Ths)
-    time        = 500e6 * yr #6e9 * yr
-    Ths         = Tmax - (Tmax + Tm) * erf((maximum(z)-zᵢ)*0.5/(k*time*5)^0.5)
-    @inbounds T[i, j] =  max(Tᵢ, Ths)
+    yr      = 3600*24*365.25
+    dTdz    = Tm-Tp
+    zᵢ      = abs(z[j])
+    Tᵢ      = Tp + dTdz*(zᵢ)
+    time    = 100e6 * yr
+    Ths     = Tmin + (Tm -Tmin) * erf((zᵢ)*0.5/(k*time)^0.5)
+    Tᵢ      = min(Tᵢ, Ths)
+    time    = 100e6 * yr #6e9 * yr
+    Ths     = Tmax - (Tmax + Tm) * erf((maximum(z)-zᵢ)*0.5/(k*time*5)^0.5)
+    T[i, j] = max(Tᵢ, Ths)
 
     return 
 end
@@ -69,7 +63,7 @@ end
     @inbounds ρg[i, j] = compute_density(rheology, ntuple_idx(args, i, j)) * _compute_gravity(rheology)
     return nothing
 end
-_compute_gravity(v::MaterialParams) =  compute_gravity(v.Gravity[1])
+_compute_gravity(v::MaterialParams) = compute_gravity(v.Gravity[1])
 
 function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
 
@@ -239,3 +233,16 @@ nx     = n*ar - 2
 ny     = n - 2
 
 thermal_convection2D(; figdir=figdir, ar=ar,nx=nx, ny=ny);
+
+struct Res{T}
+    x::T
+    y::T
+    z::T
+end
+
+n =20
+A = Res(rand(n),rand(n),rand(n))
+
+errs = ntuple(Val(3)) do i
+    maximum(x->abs(x), getfield(A, i))
+end
