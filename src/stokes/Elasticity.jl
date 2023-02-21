@@ -455,8 +455,7 @@ function JustRelax.solve!(
                 stokes.τ.yy,
                 stokes.τ.xy,
                 ηdτ,
-                ρg[1],
-                ρg[2],
+                ρg...,
                 ητ,
                 _di...,
             )
@@ -473,15 +472,16 @@ function JustRelax.solve!(
                 stokes.τ.xx,
                 stokes.τ.yy,
                 stokes.τ.xy,
-                ρg[1],
-                ρg[2],
+                ρg...,
                 _di...,
             )
-            errs = maximum.((abs.(stokes.R.Rx), abs.(stokes.R.Ry), abs.(stokes.R.RP)))
+            errs = ntuple(Val(3)) do i
+                maximum(x->abs(x), getfield(stokes.R, i))
+            end
+            err = maximum(errs)
             push!(norm_Rx, errs[1])
             push!(norm_Ry, errs[2])
             push!(norm_∇V, errs[3])
-            err = maximum(errs)
             push!(err_evo1, err)
             push!(err_evo2, iter)
             if (verbose) || (iter == iterMax)
@@ -612,8 +612,7 @@ function JustRelax.solve!(
                 stokes.τ.yy,
                 stokes.τ.xy,
                 ηdτ,
-                ρg[1],
-                ρg[2],
+                ρg...,
                 ητ,
                 _di...,
             )
@@ -636,11 +635,13 @@ function JustRelax.solve!(
                 ρg[2],
                 _di...,
             )
-            errs = maximum.((abs.(stokes.R.Rx), abs.(stokes.R.Ry), abs.(stokes.R.RP)))
+            errs = ntuple(Val(3)) do i
+                maximum(x->abs(x), getfield(stokes.R, i))
+            end
+            err = maximum(errs)
             push!(norm_Rx, errs[1])
             push!(norm_Ry, errs[2])
             push!(norm_∇V, errs[3])
-            err = maximum(errs)
             push!(err_evo1, err)
             push!(err_evo2, iter)
             if (verbose && err > ϵ) || (iter == iterMax)
