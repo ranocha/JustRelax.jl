@@ -476,7 +476,7 @@ function JustRelax.solve!(
                 _di...,
             )
             errs = ntuple(Val(3)) do i
-                maximum(x->abs(x), getfield(stokes.R, i))
+                maximum(x->abs.(x), getfield(stokes.R, i))
             end
             err = maximum(errs)
             push!(norm_Rx, errs[1])
@@ -636,7 +636,7 @@ function JustRelax.solve!(
                 _di...,
             )
             errs = ntuple(Val(3)) do i
-                maximum(x->abs(x), getfield(stokes.R, i))
+                maximum(x->abs.(x), getfield(stokes.R, i))
             end
             err = maximum(errs)
             push!(norm_Rx, errs[1])
