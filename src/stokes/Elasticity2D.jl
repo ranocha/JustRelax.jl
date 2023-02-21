@@ -268,7 +268,8 @@ end
         dτ_r                = 1.0 / (θ_dτ / η[i, j] + 1.0 / η_vep[i, j]) # equivalent to dτ_r = @. 1.0/(θ_dτ + η/(G*dt) + 1.0)
         # # Setup up input for GeoParams.jl
         # args                = (; dt=dt, P = 1e6 * (1 - z[j]) , T=av(T), τII_old=0.0)
-        args                = (; dt=dt, P = args_η.P[i, j] + 7.191237228154622e10, depth = abs(args_η.depth[j]), T=av(T), τII_old=0.0)
+        args                = (; dt=dt, P = (args_η.P[i, j] ), depth = abs(args_η.depth[j]), T=av(T), τII_old=0.0)
+        # args                = (; dt=dt, P = args_η.P[i, j] + 7.191237228154622e10, depth = abs(args_η.depth[j]), T=av(T), τII_old=0.0)
         εij_p               = εxx[i, j]+1e-25, εyy[i, j]+1e-25, gather(εxyv).+1e-25
         τij_p_o             = τxx_o[i,j], τyy_o[i,j], gather(τxyv_o)
         phases              = (1, 1, (1,1,1,1)) # for now hard-coded for a single phase

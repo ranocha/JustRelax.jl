@@ -26,7 +26,7 @@ macro all_j(A)
 end
 
 @parallel function init_P!(P, ρg, z)
-    @all(P) = @all(ρg)*@all_j(z)
+    @all(P) = @all(ρg)*(-@all_j(z))
     return nothing
 end
 
@@ -40,7 +40,8 @@ end
     Ths     = Tmin + (Tm -Tmin) * erf((zᵢ)*0.5/(k*time)^0.5)
     Tᵢ      = min(Tᵢ, Ths)
     time    = 100e6 * yr #6e9 * yr
-    Ths     = Tmax - (Tmax + Tm) * erf((maximum(z)-zᵢ)*0.5/(k*time*5)^0.5)
+    Ths     = Tmax - (Tmax + Tm) * erf((-minimum(z)-zᵢ)*0.5/(k*time*5)^0.5)
+    T[i, j] = Tᵢ
     T[i, j] = max(Tᵢ, Ths)
 
     return 
@@ -78,7 +79,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     # ----------------------------------------------------
 
     # Physical properties using GeoParams ----------------
-    η_reg     = 1e19
+    η_reg     = 1e16
     G0        = Inf                                                             # shear modulus
     cohesion  = 30e6
     pl        = DruckerPrager_regularised(; C = cohesion, ϕ=30.0, η_vp=η_reg, Ψ=0.0) # non-regularized plasticity
@@ -118,8 +119,8 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     )
     # initialize thermal profile - Half space cooling
     k           = 3/4500/1200
-    Tm, Tp      = 1900, 1600
-    Tmin, Tmax  = 3e2, 1.9e3#4e3
+    Tm, Tp      = (1900, 1600) .+ 300
+    Tmin, Tmax  = 300, 3e3
     @parallel init_T!(thermal.T, xvi[2], k, Tm, Tp, Tmin, Tmax)
     # Elliptical temperature anomaly 
     xc, yc      =  0.5*lx, -0.75*ly  # origin of thermal anomaly
@@ -131,7 +132,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     # STOKES ---------------------------------------------
     # Allocate arrays needed for every Stokes problem
     stokes          = StokesArrays(ni, ViscoElastic)
-    pt_stokes       = PTStokesCoeffs(li, di; ϵ=1e-6,  CFL=1 / √2.1)
+    pt_stokes       = PTStokesCoeffs(li, di; ϵ=1e-5,  CFL=1 / √2.1)
     # Buoyancy forces
     ρg              = @zeros(ni...), @zeros(ni...)
     @parallel (@idx ni) compute_ρg!(ρg[2], rheology, (T=thermal.T, P=stokes.P))
@@ -155,12 +156,13 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
 
     # Time loop
     t, it = 0.0, 0
-    nt    = 150
+    nt    = 500
+    v= rheology.CompositeRheology[1]
     local iters
     while it < nt
 
         # Update buoyancy and viscosity -
-        @parallel (@idx ni) computeViscosity!(η, rheology.CompositeRheology[1], args_η)
+        @parallel (@idx ni) computeViscosity!(η, v, args_η)
         @parallel (@idx ni) compute_ρg!(ρg[2], rheology, (T=thermal.T, P=stokes.P))
         # @parallel update_buoyancy!(ρg[2], thermal.T, -Ra)
         # ------------------------------
@@ -178,7 +180,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
             η_vep,
             args_η,
             it > 3 ? rheology_depth : rheology, # do a few initial time-steps without plasticity to improve convergence
-            dt,
+            dt_elasticity,
             iterMax=150e3,
             nout=500,
         )
@@ -202,20 +204,20 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
         t += dt
 
         # Plotting ---------------------
-        if it == 1 || rem(it, 1) == 0
+        if it == 1 || rem(it, 10) == 0
             fig = Figure(resolution = (900, 1600), title = "t = $t")
             ax1 = Axis(fig[1,1], aspect = ar, title = "T")
             ax2 = Axis(fig[2,1], aspect = ar, title = "Vy")
             ax3 = Axis(fig[3,1], aspect = ar, title = "τII")
             ax4 = Axis(fig[4,1], aspect = ar, title = "η")
-            h1 = heatmap!(ax1, xvi[1], xvi[2], Array(thermal.T) , colormap=:batlow)
-            h2 = heatmap!(ax2, xci[1], xvi[2], Array(stokes.V.Vy[2:end-1,:]) , colormap=:batlow)
-            h3 = heatmap!(ax3, xci[1], xci[2], Array(stokes.τ.II) , colormap=:romaO) 
-            h4 = heatmap!(ax4, xci[1], xci[2], Array(log10.(η_vep)) , colormap=:batlow)
-            Colorbar(fig[1,2], h1)
-            Colorbar(fig[2,2], h2)
-            Colorbar(fig[3,2], h3)
-            Colorbar(fig[4,2], h4)
+            h1 = heatmap!(ax1, xvi[1].*1e-3, xvi[2].*1e-3, Array(thermal.T) , colormap=:batlow)
+            h2 = heatmap!(ax2, xci[1].*1e-3, xvi[2].*1e-3, Array(stokes.V.Vy[2:end-1,:]) , colormap=:batlow)
+            h3 = heatmap!(ax3, xci[1].*1e-3, xci[2].*1e-3, Array(stokes.τ.II) , colormap=:romaO) 
+            h4 = heatmap!(ax4, xci[1].*1e-3, xci[2].*1e-3, Array(log10.(η_vep)) , colormap=:batlow)
+            Colorbar(fig[1,2], h1, height=100)
+            Colorbar(fig[2,2], h2, height=100)
+            Colorbar(fig[3,2], h3, height=100)
+            Colorbar(fig[4,2], h4, height=100)
             fig
             save( joinpath(figdir, "$(it).png"), fig)
         end
@@ -227,22 +229,9 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
 end
 
 figdir = "figs2D"
-ar     = 3 # aspect ratio
-n      = 128
+ar     = 8 # aspect ratio
+n      = 32
 nx     = n*ar - 2
 ny     = n - 2
 
 thermal_convection2D(; figdir=figdir, ar=ar,nx=nx, ny=ny);
-
-struct Res{T}
-    x::T
-    y::T
-    z::T
-end
-
-n =20
-A = Res(rand(n),rand(n),rand(n))
-
-errs = ntuple(Val(3)) do i
-    maximum(x->abs(x), getfield(A, i))
-end
