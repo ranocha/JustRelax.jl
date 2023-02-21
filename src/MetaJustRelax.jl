@@ -57,7 +57,7 @@ function environment!(model::PS_Setup{T,N}) where {T,N}
         include(joinpath(@__DIR__, "stokes/Stokes.jl"))
         export stress
 
-        include(joinpath(@__DIR__, "stokes/Elasticity$(N)D.jl"))
+        include(joinpath(@__DIR__, "stokes/Elasticity$(string($N))D.jl"))
 
         include(joinpath(@__DIR__, "thermal_diffusion/DiffusionExplicit.jl"))
         # include(joinpath(@__DIR__, "thermal_diffusion/Diffusion.jl"))
