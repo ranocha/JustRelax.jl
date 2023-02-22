@@ -106,22 +106,23 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
         Elasticity        = SetConstantElasticity(; G=G0, ν=0.5),
         Gravity           = ConstantGravity(; g=9.81),
     )
-    κ            = (rheology.Conductivity[1].k / (rheology.HeatCapacity[1].cp * rheology.Density[1].ρ0)).val
     # heat diffusivity
-    dt = dt_diff = 0.5 / 6.1 * min(di...)^2 / κ # diffusive CFL timestep limiter
+    κ            = (rheology.Conductivity[1].k / (rheology.HeatCapacity[1].cp * rheology.Density[1].ρ0)).val
+    dt = dt_diff = 0.5 / 4.1 * min(di...)^2 / κ # diffusive CFL timestep limiter
     # ----------------------------------------------------
     
     # TEMPERATURE PROFILE --------------------------------
     thermal    = ThermalArrays(ni)
     thermal_bc = TemperatureBoundaryConditions(; 
-        no_flux     = (left = true, right = true, top = false, bot = false), 
-        periodicity = (left = false, right = false, top = false, bot = false),
+        no_flux     = (left = false, right = false, top = false, bot = false), 
+        periodicity = (left = true, right = true, top = false, bot = false),
     )
     # initialize thermal profile - Half space cooling
     k           = 3/4500/1200
-    Tm, Tp      = (1900, 1600) .+ 300
-    Tmin, Tmax  = 300, 3e3
+    Tm, Tp      = 1900, 1600
+    Tmin, Tmax  = 300.0, 3e3
     @parallel init_T!(thermal.T, xvi[2], k, Tm, Tp, Tmin, Tmax)
+    thermal_bcs!(thermal.T, thermal_bc)
     # Elliptical temperature anomaly 
     xc, yc      =  0.5*lx, -0.75*ly  # origin of thermal anomaly
     δT          = 10.0              # thermal perturbation (in %)
@@ -145,7 +146,8 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     dt_elasticity   = Inf
     # Boundary conditions
     flow_bcs = FlowBoundaryConditions(; 
-        free_slip = (left=true, right=true, top=true, bot=true), 
+        free_slip = (left=false, right=false, top=true, bot=true),
+        periodicity = (left = true, right = true, top = false, bot = false),
     )
     # ----------------------------------------------------
 
@@ -164,7 +166,6 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
         # Update buoyancy and viscosity -
         @parallel (@idx ni) computeViscosity!(η, v, args_η)
         @parallel (@idx ni) compute_ρg!(ρg[2], rheology, (T=thermal.T, P=stokes.P))
-        # @parallel update_buoyancy!(ρg[2], thermal.T, -Ra)
         # ------------------------------
 
         # Stokes solver ----------------
@@ -205,7 +206,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
 
         # Plotting ---------------------
         if it == 1 || rem(it, 10) == 0
-            fig = Figure(resolution = (900, 1600), title = "t = $t")
+            fig = Figure(resolution = (900, 1400), title = "t = $t")
             ax1 = Axis(fig[1,1], aspect = ar, title = "T")
             ax2 = Axis(fig[2,1], aspect = ar, title = "Vy")
             ax3 = Axis(fig[3,1], aspect = ar, title = "τII")
@@ -235,3 +236,31 @@ nx     = n*ar - 2
 ny     = n - 2
 
 thermal_convection2D(; figdir=figdir, ar=ar,nx=nx, ny=ny);
+
+
+#  # Compute some constant stuff
+#  _dx, _dy = inv.(di)
+#  nx, ny = size(thermal.T)
+
+#  # solve heat diffusion
+#  @parallel assign!(thermal.Told, thermal.T)
+ 
+#  environment!(model)
+#  @parallel (1:(nx - 1), 1:(ny - 1)) JustRelax.ThermalDiffusion2D.compute_flux!(
+#      thermal.qTx, thermal.qTy, thermal.T, rheology, args_T, _dx, _dy
+#  )
+
+#  @parallel JustRelax.ThermalDiffusion2D.advect_T!(
+#      thermal.dT_dt,
+#      thermal.qTx,
+#      thermal.qTy,
+#      thermal.T,
+#      stokes.V.Vx,
+#      stokes.V.Vy,
+#      _dx,
+#      _dy,
+#  )
+#  @parallel update_T!(thermal.T, thermal.dT_dt, dt)
+#  thermal_bcs!(thermal.T, thermal_bc)
+
+#  @. thermal.ΔT = thermal.T - thermal.Told
