@@ -213,12 +213,12 @@ end
 @parallel_indices (i) function periodic_boundaries!(Ax, Ay, bc)
     @inbounds begin
         if i ≤ size(Ax, 1)
-            bc.bot && (Ax[i, 1] = Ax[i, end - 1])
-            bc.top && (Ax[i, end] = Ax[i, 2])
+            bc.bot && (Ax[i, 1] = Ax[i, end - 2])
+            bc.top && (Ax[i, end] = Ax[i, 3])
         end
         if i ≤ size(Ay, 2)
-            bc.left && (Ay[1, i] = Ay[end - 1, i])
-            bc.right && (Ay[end, i] = Ay[2, i])
+            bc.left && (Ay[1, i] = Ay[end - 2, i])
+            bc.right && (Ay[end, i] = Ay[3, i])
         end
     end
     return nothing
@@ -227,12 +227,12 @@ end
 @parallel_indices (i) function periodic_boundaries!(T::_T, bc) where _T<:AbstractArray{<:Any, 2}
     @inbounds begin
         if i ≤ size(T, 1)
-            bc.bot && (T[i, 1] = T[i, end - 1])
-            bc.top && (T[i, end] = T[i, 2])
+            bc.bot && (T[i, 1] = T[i, end - 2])
+            bc.top && (T[i, end] = T[i, 3])
         end
         if i ≤ size(T, 2)
-            bc.left && (T[1, i] = T[end - 1, i])
-            bc.right && (T[end, i] = T[2, i])
+            bc.left && (T[1, i] = T[end - 2, i])
+            bc.right && (T[end, i] = T[3, i])
         end
     end
     return nothing
