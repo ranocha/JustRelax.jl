@@ -187,24 +187,13 @@ end
 )
 
     i1, j1 = @add 1 i j # augment indices by 1
-    nPx, nPy = size(args.P)
-    iP11 = iP12 = clamp(i - 1, 1, nPx)
-    iP21 = iP22 = clamp(i    , 1, nPx)
-    jP11 = jP12 = clamp(j    , 1, nPy)
-    jP21 = jP22 = clamp(j + 1, 1, nPy)
-    # Pvertex = args.P[iP12, jP22] 
-    Pvertex = (args.P[iP11, jP11] + args.P[iP21, jP21] + args.P[iP12, jP12] + args.P[iP22, jP22]) * 0.25
-
+    
     if all((i,j).≤ size(qTx))
-        Tx = (T[i1, j1] + T[i, j1]) * 0.5
-        argsx = (; T = Tx, P=Pvertex)
-        @inbounds qTx[i, j] = -compute_diffusivity(rheology, argsx) * (T[i1, j1] - T[i, j1]) * _dx
+        @inbounds qTx[i, j] = -compute_diffusivity(rheology, ntuple_idx(args, i, j)) * (T[i1, j1] - T[i, j1]) * _dx
     end
 
     if all((i,j).≤ size(qTy))
-        Ty = (T[i1, j1] + T[i1, j]) * 0.5
-        argsy = (; T = Ty, P=Pvertex)
-        @inbounds qTy[i, j] = -compute_diffusivity(rheology, argsy) * (T[i1, j1] - T[i1, j]) * _dy
+        @inbounds qTy[i, j] = -compute_diffusivity(rheology, ntuple_idx(args, i, j)) * (T[i1, j1] - T[i1, j]) * _dy
     end
 
     return nothing
@@ -217,8 +206,8 @@ end
         i2, j2 = @add 2 i j # augment indices by 2
 
         @inbounds begin
-            Vxᵢⱼ = 0.5 * (Vx[i1, j2] + Vx[i , j2])
-            Vyᵢⱼ = 0.5 * (Vy[i1, j2] + Vy[i1, j1])
+            Vxᵢⱼ = 0.5 * (Vx[i2, j2] + Vx[i1, j2])
+            Vyᵢⱼ = 0.5 * (Vy[i2, j2] + Vy[i2, j1])
     
             dT_dt[i, j] =
                 -((qTx[i1, j] - qTx[i, j]) * _dx + (qTy[i, j1] - qTy[i, j]) * _dy) -
@@ -349,6 +338,7 @@ function JustRelax.solve!(
     # Compute some constant stuff
     _dx, _dy = inv.(di)
     nx, ny = size(thermal.T)
+
     # solve heat diffusion
     @parallel assign!(thermal.Told, thermal.T)
     @parallel (1:(nx - 1), 1:(ny - 1)) compute_flux!(
