@@ -12,7 +12,7 @@ using Printf, LinearAlgebra, GeoParams, GLMakie, SpecialFunctions
 # HELPER FUNCTIONS ---------------------------------------------------------------
 @parallel_indices (i, j) function computeViscosity!(η, v, args)
 
-    @inline av(T) = 0.25* (T[i,j] + T[i+1,j] + T[i,j+1] + T[i+1,j+1])
+    @inline av(T) = 0.25* (T[i+1,j] + T[i+2,j] + T[i+1,j+1] + T[i+2,j+1])
 
     @inbounds η[i, j] = computeViscosity_εII(v, 1.0, (; T = av(args.T), P=args.P[i, j], depth=abs(args.depth[j])))
 
@@ -61,7 +61,11 @@ end
 # --------------------------------------------------------------------------------
 
 @parallel_indices (i, j) function compute_ρg!(ρg, rheology, args)
-    @inbounds ρg[i, j] = compute_density(rheology, ntuple_idx(args, i, j)) * _compute_gravity(rheology)
+
+    @inline av(T) = 0.25* (T[i+1,j] + T[i+2,j] + T[i+1,j+1] + T[i+2,j+1])
+
+    @inbounds ρg[i, j] = compute_density(rheology, (; T = av(args.T), P=args.P[i, j])) * _compute_gravity(rheology)
+
     return nothing
 end
 _compute_gravity(v::MaterialParams) = compute_gravity(v.Gravity[1])
@@ -159,7 +163,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     # Time loop
     t, it = 0.0, 0
     nt    = 500
-    v= rheology.CompositeRheology[1]
+    v     = rheology.CompositeRheology[1]
     local iters
     while it < nt
 
@@ -205,7 +209,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
         t += dt
 
         # Plotting ---------------------
-        if it == 1 || rem(it, 10) == 0
+        if it == 1 || rem(it, 25) == 0
             fig = Figure(resolution = (900, 1400), title = "t = $t")
             ax1 = Axis(fig[1,1], aspect = ar, title = "T")
             ax2 = Axis(fig[2,1], aspect = ar, title = "Vy")
