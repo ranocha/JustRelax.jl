@@ -13,7 +13,7 @@ end
 
 @parallel_indices (i, j) function computeViscosity!(η, v, args)
 
-    @inline av(T) = 0.25* (T[i,j] + T[i+1,j] + T[i,j+1] + T[i+1,j+1])
+    @inline av(T) = 0.25* (T[i+1,j] + T[i+2,j] + T[i+1,j+1] + T[i+2,j+1])
 
     @inbounds η[i, j] = computeViscosity_εII(v, 1.0, (; T = av(args.T)))
 
