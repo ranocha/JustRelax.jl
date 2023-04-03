@@ -9,13 +9,44 @@ environment!(model)
 
 using Printf, LinearAlgebra, GeoParams, GLMakie, SpecialFunctions
 
+# function to compute strain rate (compulsory)
+@inline function custom_εII(a::CustomRheology, TauII; args...)
+    η = custom_viscosity(a; args...)
+    return (TauII / η) * 0.5
+end
+
+# function to compute deviatoric stress (compulsory)
+@inline function custom_τII(a::CustomRheology, EpsII; args...)
+    η = custom_viscosity(a; args...)
+    return 2.0 * (η * EpsII)
+end
+
+# helper function (optional)
+@inline function custom_viscosity(a::CustomRheology; P=0.0, T=273.0, depth=0.0, kwargs...)
+    η0, Ea, Va, T0, R, cutoff = a.args.η0,
+    a.args.Ea, a.args.Va, a.args.T0, a.args.R,
+    a.args.cutoff
+    η = η0 * exp((Ea + P * Va) / (R * T) - Ea / (R * T0))
+    correction = (depth ≤ 660e3) + (depth > 660e3) * 1e1
+    return clamp(η * correction, cutoff...)
+end
+
 # HELPER FUNCTIONS ---------------------------------------------------------------
-@parallel_indices (i, j) function computeViscosity!(η, v, args)
+# visco-elasto-plastic with GeoParams
+@parallel_indices (i, j) function compute_viscosity_gp!(η, args, MatParam)
 
-    @inline av(T) = 0.25* (T[i+1,j] + T[i+2,j] + T[i+1,j+1] + T[i+2,j+1])
+    # convinience closure
+    @inline av(T)     = (T[i + 1, j] + T[i + 2, j] + T[i + 1, j + 1] + T[i + 2, j + 1]) * 0.25
 
-    @inbounds η[i, j] = computeViscosity_εII(v, 1.0, (; T = av(args.T), P=args.P[i, j], depth=abs(args.depth[j])))
-
+    @inbounds begin
+        args_ij              = (; dt = args.dt, P = (args.P[i, j]), depth = abs(args.depth[j]), T=av(args.T), τII_old=0.0)
+        εij_p               = 1.0, 1.0, (1.0, 1.0, 1.0, 1.0)
+        τij_p_o             = 0.0, 0.0, (0.0, 0.0, 0.0, 0.0)
+        phases              = 1, 1, (1,1,1,1) # for now hard-coded for a single phase
+        # # update stress and effective viscosity
+        _, _, η[i, j]  = compute_τij(MatParam, εij_p, args_ij, τij_p_o, phases)
+    end
+    
     return nothing
 end
 
@@ -80,18 +111,24 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     xci, xvi = lazy_grid(di, li, ni; origin=origin) # nodes at the center and vertices of the cells
     # ----------------------------------------------------
 
+    # create rheology struct
+    v_args = (; η0=5e20, Ea=100e3, Va=1.6e-6, T0=1.6e3, R=8.3145, cutoff=(1e16, 1e25))
+    creep = CustomRheology(custom_εII, custom_τII, v_args)
+
     # Physical properties using GeoParams ----------------
     η_reg     = 1e16
-    G0        = Inf                                                             # shear modulus
+    G0        = 70e9                                                             # shear modulus
     cohesion  = 30e6
     pl        = DruckerPrager_regularised(; C = cohesion, ϕ=30.0, η_vp=η_reg, Ψ=0.0) # non-regularized plasticity
     el        = SetConstantElasticity(; G=G0, ν=0.5)                             # elastic spring
-    creep     = ArrheniusType2(; η0 = 1e22, T0=1600, Ea=100e3, Va=1.0e-6)       # Arrhenius-like (T-dependant) viscosity
+    # creep     = ArrheniusType2(; η0 = 1e22, T0=1600, Ea=100e3, Va=1.0e-6)       # Arrhenius-like (T-dependant) viscosity
+
+
     # Define rheolgy struct
     rheology = SetMaterialParams(;
         Name              = "Mantle",
         Phase             = 1,
-        Density           = PT_Density(; ρ0=3300, β=0.0, α = 3e-5),
+        Density           = PT_Density(; ρ0=4000, β=0.0, α = 3e-5),
         HeatCapacity      = ConstantHeatCapacity(; cp=1.2e3),
         Conductivity      = ConstantConductivity(; k=3.0),
         CompositeRheology = CompositeRheology((creep, el)),
@@ -101,7 +138,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     rheology_depth    = SetMaterialParams(;
         Name              = "Mantle",
         Phase             = 1,
-        Density           = PT_Density(; ρ0=3300, β=0.0, α = 3e-5),
+        Density           = PT_Density(; ρ0=4000, β=0.0, α = 3e-5),
         HeatCapacity      = ConstantHeatCapacity(; cp=1.2e3),
         Conductivity      = ConstantConductivity(; k=3.0),
         CompositeRheology = CompositeRheology((creep, el, pl)),
@@ -110,7 +147,8 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     )
     # heat diffusivity
     κ            = (rheology.Conductivity[1].k / (rheology.HeatCapacity[1].cp * rheology.Density[1].ρ0)).val
-    dt = dt_diff = 0.5 / 4.1 * min(di...)^2 / κ # diffusive CFL timestep limiter
+    dt = dt_diff = 0.5 / 2.1 * min(di...)^2 / κ # diffusive CFL timestep limiter
+    # dt = Inf # diffusive CFL timestep limiter
     # ----------------------------------------------------
     
     # TEMPERATURE PROFILE --------------------------------
@@ -142,8 +180,8 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     @parallel init_P!(stokes.P, ρg[2], xci[2])
     # Rheology
     η               = @ones(ni...)
-    args_η          = (; T = thermal.T, P = stokes.P, depth = xci[2], dt=Inf)
-    @parallel (@idx ni) computeViscosity!(η, rheology.CompositeRheology[1], args_η) # init viscosity field
+    args_ηv          = (; T = thermal.T, P = stokes.P, depth = xci[2], dt = Inf)
+    @parallel (@idx ni) compute_viscosity_gp!(η, args_ηv, (rheology,))
     η_vep           = deepcopy(η)
     dt_elasticity   = Inf
     # Boundary conditions
@@ -161,17 +199,17 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     # Time loop
     t, it = 0.0, 0
     nt    = 500
-    v     = rheology.CompositeRheology[1]
     local iters
     while it < nt
 
         # Update buoyancy and viscosity -
-        @parallel (@idx ni) computeViscosity!(η, v, args_η)
+        args_ηv = (; T = thermal.T, P = stokes.P, depth = xci[2], dt=Inf)
+        @parallel (@idx ni) compute_viscosity_gp!(η, args_ηv, (rheology,))
         @parallel (@idx ni) compute_ρg!(ρg[2], rheology, (T=thermal.T, P=stokes.P))
         # ------------------------------
 
         # Stokes solver ----------------
-        args_η = (; T = thermal.T, P = stokes.P, depth = xci[2], dt=Inf)
+        args_η = (; T = thermal.T, P = stokes.P, depth = xci[2], dt=dt)
         iters = solve!(
             stokes,
             thermal,
@@ -183,7 +221,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
             η_vep,
             args_η,
             it > 3 ? rheology_depth : rheology, # do a few initial time-steps without plasticity to improve convergence
-            dt_elasticity,
+            dt, #dt_elasticity,
             iterMax=150e3,
             nout=500,
         )
@@ -238,31 +276,3 @@ nx     = n*ar - 2
 ny     = n - 2
 
 thermal_convection2D(; figdir=figdir, ar=ar,nx=nx, ny=ny);
-
-
-#  # Compute some constant stuff
-#  _dx, _dy = inv.(di)
-#  nx, ny = size(thermal.T)
-
-#  # solve heat diffusion
-#  @parallel assign!(thermal.Told, thermal.T)
- 
-#  environment!(model)
-#  @parallel (1:(nx - 1), 1:(ny - 1)) JustRelax.ThermalDiffusion2D.compute_flux!(
-#      thermal.qTx, thermal.qTy, thermal.T, rheology, args_T, _dx, _dy
-#  )
-
-#  @parallel JustRelax.ThermalDiffusion2D.advect_T!(
-#      thermal.dT_dt,
-#      thermal.qTx,
-#      thermal.qTy,
-#      thermal.T,
-#      stokes.V.Vx,
-#      stokes.V.Vy,
-#      _dx,
-#      _dy,
-#  )
-#  @parallel update_T!(thermal.T, thermal.dT_dt, dt)
-#  thermal_bcs!(thermal.T, thermal_bc)
-
-#  @. thermal.ΔT = thermal.T - thermal.Told
