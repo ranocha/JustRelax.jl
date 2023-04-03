@@ -33,17 +33,15 @@ end
 # Half-space-cooling model
 @parallel_indices (i, j) function init_T!(T, z, k, Tm, Tp, Tmin, Tmax)
     yr      = 3600*24*365.25
-    dTdz    = Tm-Tp
+    dTdz    = (Tm-Tp)/2890e3
     zᵢ      = abs(z[j])
     Tᵢ      = Tp + dTdz*(zᵢ)
-    time    = 100e6 * yr
+    time    = 500e6 * yr
     Ths     = Tmin + (Tm -Tmin) * erf((zᵢ)*0.5/(k*time)^0.5)
     Tᵢ      = min(Tᵢ, Ths)
-    time    = 100e6 * yr #6e9 * yr
+    time    = 500e6 * yr #6e9 * yr
     Ths     = Tmax - (Tmax + Tm) * erf((-minimum(z)-zᵢ)*0.5/(k*time*5)^0.5)
-    T[i, j] = Tᵢ
     T[i, j] = max(Tᵢ, Ths)
-
     return 
 end
 
