@@ -4,7 +4,7 @@ using JustRelax
 # using Pkg; Pkg.add(url="https://github.com/JuliaGeodynamics/GeoParams.jl"; rev="adm-arrhenius_dim")
 
 # setup ParallelStencil.jl environment
-model = PS_Setup(:gpu, Float64, 2)
+model = PS_Setup(:gpu, Float64, 3)
 environment!(model)
 
 using Printf, LinearAlgebra, GeoParams, GLMakie, SpecialFunctions
@@ -33,81 +33,96 @@ end
 
 # HELPER FUNCTIONS ---------------------------------------------------------------
 # visco-elasto-plastic with GeoParams
-@parallel_indices (i, j) function compute_viscosity_gp!(η, args, MatParam)
+@parallel_indices (i, j, k) function compute_viscosity_gp!(η, args, MatParam)
 
     # convinience closure
-    @inline av(T)     = (T[i + 1, j] + T[i + 2, j] + T[i + 1, j + 1] + T[i + 2, j + 1]) * 0.25
+    Base.@propagate_inbounds @inline av(T) = 0.125* (
+        T[i, j, k  ] + T[i+1, j, k  ] + T[i, j+1, k  ] + T[i+1, j+1, k  ] +
+        T[i, j, k+1] + T[i+1, j, k+1] + T[i, j+1, k+1] + T[i+1, j+1, k+1]
+    )
 
+    _ones = 1.0, 1.0, 1.0, 1.0
+    _zeros = 0.0, 0.0, 0.0, 0.0
     @inbounds begin
-        args_ij              = (; dt = args.dt, P = (args.P[i, j]), depth = abs(args.depth[j]), T=av(args.T), τII_old=0.0)
-        εij_p               = 1.0, 1.0, (1.0, 1.0, 1.0, 1.0)
-        τij_p_o             = 0.0, 0.0, (0.0, 0.0, 0.0, 0.0)
-        phases              = 1, 1, (1,1,1,1) # for now hard-coded for a single phase
+        args_ij  = (; dt = args.dt, P = (args.P[i, j, k]), depth = abs(args.depth[k]), T=av(args.T), τII_old=0.0)
+        εij_p    = 1.0, 1.0, 1.0, _ones, _ones, _ones
+        τij_p_o  = 0.0, 0.0, 0.0, _zeros, _zeros, _zeros
+        phases   = 1, 1, 1, (1,1,1,1), (1,1,1,1), (1,1,1,1) # for now hard-coded for a single phase
         # # update stress and effective viscosity
-        _, _, η[i, j]  = compute_τij(MatParam, εij_p, args_ij, τij_p_o, phases)
+        _, _, η[i, j, k] = compute_τij(MatParam, εij_p, args_ij, τij_p_o, phases)
     end
     
     return nothing
 end
 
+
+args_ηv          = (; T = thermal.T, P = stokes.P, depth = xci[3], dt = Inf)
+@parallel (@idx ni) compute_viscosity_gp!(η, args_ηv, (rheology,))
+   
+
 import ParallelStencil.INDICES
-const idx_j = INDICES[2]
-macro all_j(A)
-    esc(:($A[$idx_j]))
+const idx_k = INDICES[3]
+macro all_k(A)
+    esc(:($A[$idx_k]))
 end
 
 @parallel function init_P!(P, ρg, z)
-    @all(P) = @all(ρg)*(-@all_j(z))
+    @all(P) = @all(ρg)*(-@all_k(z))
     return nothing
 end
 
 # Half-space-cooling model
-@parallel_indices (i, j) function init_T!(T, z, κ, Tm, Tp, Tmin, Tmax)
-    yr      = 3600*24*365.25
-    dTdz    = (Tm-Tp)/2890e3
-    zᵢ      = abs(z[j])
-    Tᵢ      = Tp + dTdz*(zᵢ)
-    time    = 500e6 * yr
-    Ths     = Tmin + (Tm -Tmin) * erf((zᵢ)*0.5/(κ*time)^0.5)
-    Tᵢ      = min(Tᵢ, Ths)
-    time    = 500e6 * yr #6e9 * yr
-    Ths     = Tmax - (Tmax + Tm) * erf((-minimum(z)-zᵢ)*0.5/(κ*time*5)^0.5)
-    T[i, j] = max(Tᵢ, Ths)
+@parallel_indices (i, j, k) function init_T!(T, z, κ, Tm, Tp, Tmin, Tmax)
+    year       = 3600*24*365.25
+    dTdz       = (Tm-Tp)/2890e3
+    zᵢ         = abs(z[k])
+    Tᵢ         = Tp + dTdz*(zᵢ)
+    time       = 500e6 * year
+    Ths        = Tmin + (Tm - Tmin) * erf((zᵢ)*0.5/(κ*time)^0.5)
+    Tᵢ         = min(Tᵢ, Ths)
+    time       = 500e6 * year
+    Ths        = Tmax - (Tmax + Tm) * erf((-minimum(z)-zᵢ)*0.5/(κ*time*5)^0.5)
+    T[i, j, k] = max(Tᵢ, Ths)
     return 
 end
 
-function elliptical_perturbation!(T, δT, xc, yc, r, xvi)
+function elliptical_perturbation!(T, δT, xc, yc, zc, r, xvi)
 
-    @parallel_indices (i, j) function _elliptical_perturbation!(T, δT, xc, yc, r, x, y)
-        @inbounds if (((x[i]-xc ))^2 + ((y[j] - yc))^2) ≤ r^2
-            T[i, j] *= δT/100 + 1
+    @parallel_indices (i, j, k) function _elliptical_perturbation!(T, δT, xc, yc, zc, r, x, y, z)
+        @inbounds if (((x[i]-xc ))^2 + ((y[j] - yc))^2 + ((z[k] - zc))^2) ≤ r^2
+            T[i,j,k] *= δT/100 + 1
         end
         return nothing
     end
 
-    @parallel _elliptical_perturbation!(T, δT, xc, yc, r, xvi...)
+    @parallel _elliptical_perturbation!(T, δT, xc, yc, zc, r, xvi...)
+
 end
 # --------------------------------------------------------------------------------
 
-@parallel_indices (i, j) function compute_ρg!(ρg, rheology, args)
+@parallel_indices (i, j, k) function compute_ρg!(ρg, rheology, args)
 
-    @inline av(T) = 0.25* (T[i+1,j] + T[i+2,j] + T[i+1,j+1] + T[i+2,j+1])
-
-    @inbounds ρg[i, j] = compute_density(rheology, (; T = av(args.T), P=args.P[i, j])) * _compute_gravity(rheology)
+    # convinience closure
+    Base.@propagate_inbounds @inline av(T) = 0.125* (
+        T[i, j, k  ] + T[i+1, j, k  ] + T[i, j+1, k  ] + T[i+1, j+1, k  ] +
+        T[i, j, k+1] + T[i+1, j, k+1] + T[i, j+1, k+1] + T[i+1, j+1, k+1]
+    )
+    
+    @inbounds ρg[i, j, k] = compute_density(rheology, (; T = av(args.T), P=args.P[i, j, k])) * _gravity(rheology)
 
     return nothing
 end
-_compute_gravity(v::MaterialParams) = compute_gravity(v.Gravity[1])
+_gravity(v::MaterialParams) = compute_gravity(v.Gravity[1])
 
-function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
+function thermal_convection2D(; ar=8, nz=16, ny=nz*8, nx=nz*8, figdir="figs2D")
 
     # Physical domain ------------------------------------
-    ly       = 2890e3
-    lx       = ly * ar
-    origin   = 0.0, -ly                         # origin coordinates
-    ni       = nx, ny                           # number of cells
-    li       = lx, ly                           # domain length in x- and y-
-    di       = @. li / ni                       # grid step in x- and -y
+    lz       = 2890e3
+    lx = ly  = lz * ar
+    origin   = 0.0, 0.0, -lz                        # origin coordinates
+    ni       = nx, ny, nz                           # number of cells
+    li       = lx, ly, lz                           # domain length in x- and y-
+    di       = @. li / ni                           # grid step in x- and -y
     xci, xvi = lazy_grid(di, li, ni; origin=origin) # nodes at the center and vertices of the cells
     # ----------------------------------------------------
 
@@ -122,7 +137,6 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     pl        = DruckerPrager_regularised(; C = cohesion, ϕ=30.0, η_vp=η_reg, Ψ=0.0) # non-regularized plasticity
     el        = SetConstantElasticity(; G=G0, ν=0.5)                             # elastic spring
     # creep     = ArrheniusType2(; η0 = 1e22, T0=1600, Ea=100e3, Va=1.0e-6)       # Arrhenius-like (T-dependant) viscosity
-
 
     # Define rheolgy struct
     rheology = SetMaterialParams(;
@@ -147,40 +161,41 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     )
     # heat diffusivity
     κ            = (rheology.Conductivity[1].k / (rheology.HeatCapacity[1].cp * rheology.Density[1].ρ0)).val
-    dt = dt_diff = 0.5 / 2.1 * min(di...)^2 / κ # diffusive CFL timestep limiter
+    # dt = dt_diff = 0.5 / 3.1 * min(di...)^2 / κ # diffusive CFL timestep limiter
+    dt = dt_diff = 1.0 / (3.1*(2.0 / min(di...)^2)) / κ # diffusive CFL timestep limiter
     # dt = Inf # diffusive CFL timestep limiter
     # ----------------------------------------------------
     
     # TEMPERATURE PROFILE --------------------------------
     thermal    = ThermalArrays(ni)
     thermal_bc = TemperatureBoundaryConditions(; 
-        no_flux     = (left = false, right = false, top = false, bot = false), 
-        periodicity = (left = true, right = true, top = false, bot = false),
+        no_flux     = (left = true, right = true, top = false, bot = false, front=true, back=true), 
+        periodicity = (left = false, right = false, top = false, bot = false, front=false, back=false),
     )
     # initialize thermal profile - Half space cooling
     k           = 3/4500/1200
     Tm, Tp      = 1900, 1600
     Tmin, Tmax  = 300.0, 3e3
-    @parallel init_T!(thermal.T, xvi[2], k, Tm, Tp, Tmin, Tmax)
+    @parallel init_T!(thermal.T, xvi[3], k, Tm, Tp, Tmin, Tmax)
     thermal_bcs!(thermal.T, thermal_bc)
     # Elliptical temperature anomaly 
-    xc, yc      =  0.5*lx, -0.75*ly  # origin of thermal anomaly
+    xc, yc, zc  =  0.5*lx, 0.5*ly,-0.75*lz  # origin of thermal anomaly
     δT          = 10.0              # thermal perturbation (in %)
     r           =  150e3             # radius of perturbation
-    elliptical_perturbation!(thermal.T, δT, xc, yc, r, xvi)
+    elliptical_perturbation!(thermal.T, δT, xc, yc, zc, r, xvi)
     # ----------------------------------------------------
 
     # STOKES ---------------------------------------------
     # Allocate arrays needed for every Stokes problem
     stokes          = StokesArrays(ni, ViscoElastic)
-    pt_stokes       = PTStokesCoeffs(li, di; ϵ=1e-5,  CFL=1 / √2.1)
+    pt_stokes       = PTStokesCoeffs(li, di; ϵ=1e-5,  CFL=1 / √3.1)
     # Buoyancy forces
-    ρg              = @zeros(ni...), @zeros(ni...)
-    @parallel (@idx ni) compute_ρg!(ρg[2], rheology, (T=thermal.T, P=stokes.P))
-    @parallel init_P!(stokes.P, ρg[2], xci[2])
+    ρg              = @zeros(ni...), @zeros(ni...),  @zeros(ni...)
+    @parallel (@idx ni) compute_ρg!(ρg[3], rheology, (T=thermal.T, P=stokes.P))
+    @parallel init_P!(stokes.P, ρg[3], xci[3])
     # Rheology
     η               = @ones(ni...)
-    args_ηv          = (; T = thermal.T, P = stokes.P, depth = xci[2], dt = Inf)
+    args_ηv          = (; T = thermal.T, P = stokes.P, depth = xci[3], dt = Inf)
     @parallel (@idx ni) compute_viscosity_gp!(η, args_ηv, (rheology,))
     η_vep           = deepcopy(η)
     dt_elasticity   = Inf
@@ -205,7 +220,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
         # Update buoyancy and viscosity -
         args_ηv = (; T = thermal.T, P = stokes.P, depth = xci[2], dt=Inf)
         @parallel (@idx ni) compute_viscosity_gp!(η, args_ηv, (rheology,))
-        @parallel (@idx ni) compute_ρg!(ρg[2], rheology, (T=thermal.T, P=stokes.P))
+        @parallel (@idx ni) compute_ρg!(ρg[3], rheology, (T=thermal.T, P=stokes.P))
         # ------------------------------
 
         # Stokes solver ----------------
@@ -269,10 +284,10 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     return (ni=ni, xci=xci, li=li, di=di), thermal
 end
 
-figdir = "figs2D"
-ar     = 8 # aspect ratio
-n      = 32
-nx     = n*ar - 2
-ny     = n - 2
+figdir  = "figs3D"
+ar      = 3 # aspect ratio
+n       = 32
+nx = ny = n*ar - 2
+nz      = n - 2
 
 thermal_convection2D(; figdir=figdir, ar=ar,nx=nx, ny=ny);
