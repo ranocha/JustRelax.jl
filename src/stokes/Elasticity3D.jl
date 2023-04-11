@@ -399,7 +399,7 @@ end
     εxy,
     η, 
     η_vep, 
-    z, 
+    args_η, 
     T, 
     MatParam, 
     dt, 
@@ -409,16 +409,23 @@ end
     @inline gather_yz(A) =  A[i, j, k], A[i    , j + 1, k], A[i, j    , k + 1], A[i    , j + 1, k + 1]
     @inline gather_xz(A) =  A[i, j, k], A[i + 1, j    , k], A[i, j    , k + 1], A[i + 1, j    , k + 1]
     @inline gather_xy(A) =  A[i, j, k], A[i + 1, j    , k], A[i, j + 1, k    ], A[i + 1, j + 1, k    ]
+    @inline av(T) = 0.125 * (
+        T[i, j, k  ] + T[i, j+1, k  ] + T[i+1, j, k  ] + T[i+1, j+1, k  ] +
+        T[i, j, k+1] + T[i, j+1, k+1] + T[i+1, j, k+1] + T[i+1, j+1, k+1]
+    )
 
     @inbounds begin
         # dτ_r = 1.0 / (θ_dτ + η[i, j, k] / (get_G(MatParam[1]) * dt) + 1.0) # original
         dτ_r  = 1.0 / (θ_dτ / η[i, j, k] + 1.0 / η_vep[i, j, k]) # equivalent to dτ_r = @. 1.0/(θ_dτ + η/(G*dt) + 1.0)
         # Setup up input for GeoParams.jl
-        T_cell = 0.125 * (
-            T[i, j, k  ] + T[i, j+1, k  ] + T[i+1, j, k  ] + T[i+1, j+1, k  ] +
-            T[i, j, k+1] + T[i, j+1, k+1] + T[i+1, j, k+1] + T[i+1, j+1, k+1]
-        )
-        args  = (; dt=dt, P = 1e6 * (1 - z[k]), T=T_cell, τII_old=0.0)
+        # T_cell = 0.125 * (
+        #     T[i, j, k  ] + T[i, j+1, k  ] + T[i+1, j, k  ] + T[i+1, j+1, k  ] +
+        #     T[i, j, k+1] + T[i, j+1, k+1] + T[i+1, j, k+1] + T[i+1, j+1, k+1]
+        # )
+        # args = (; dt=dt, P = 1e6 * (1 - z[k]), T=T_cell, τII_old=0.0)
+        args = (; dt=dt, P = (args_η.P[i, j, k]), depth = abs(args_η.depth[k]), T=av(T), τII_old=0.0)
+        # args = (; dt=dt, P = (args_η.P[i, j, k]), depth = abs(args_η.depth[k]), T=1.e3, τII_old=0.0)
+
         εij_p = (
             εxx[i, j, k]+1e-25, 
             εyy[i, j, k]+1e-25, 
@@ -435,16 +442,16 @@ end
             gather_xz(τxz_o), 
             gather_xy(τxy_o)
         )
-        phases = (1, 1, 1, (1,1,1,1), (1,1,1,1), (1,1,1,1)) # for now hard-coded for a single phase
+        phases = 1, 1, 1, (1,1,1,1), (1,1,1,1), (1,1,1,1) # for now hard-coded for a single phase
         # update stress and effective viscosity
         τij, τII[i, j, k], ηᵢ = compute_τij(MatParam, εij_p, args, τij_p_o, phases)
         τ = ( # caching out improves a wee bit the performance
             τxx[i, j, k],
             τyy[i, j, k],
             τzz[i, j, k],
-            τyz[i, j, k],
-            τxz[i, j, k],
-            τxy[i, j, k], 
+            # τyz[i, j, k],
+            # τxz[i, j, k],
+            # τxy[i, j, k], 
         )
         dτ_rηᵢ = dτ_r/ηᵢ
         τxx[i, j, k]  += dτ_rηᵢ * (-τ[1] + τij[1]) # NOTE: from GP Tij = 2*η_vep * εij
@@ -667,6 +674,7 @@ function JustRelax.solve!(
     ρg,
     η,
     η_vep,
+    args_η,
     MatParam::MaterialParams,
     dt,
     igg::IGG;
@@ -763,7 +771,7 @@ function JustRelax.solve!(
                 stokes.ε.xy,
                 η,
                 η_vep,
-                z,
+                args_η,
                 thermal.T,
                 tupleize(MatParam), # needs to be a tuple
                 dt,
