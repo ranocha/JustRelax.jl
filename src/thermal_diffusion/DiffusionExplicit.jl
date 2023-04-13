@@ -250,8 +250,8 @@ end
 end
 
 @parallel function update_T!(T, dT_dt, dt)
-    # @inn(T) = @inn(T) + @all(dT_dt)* dt
-    @inn(T) = @inn(T) + (@all(dT_dt) + 7.7e-12/(3.3e3*1200)) * dt
+    @inn(T) = @inn(T) + @all(dT_dt)* dt
+    # @inn(T) = @inn(T) + (@all(dT_dt) + 7.7e-12/(3.3e3*1200)) * dt
     return nothing
 end
 

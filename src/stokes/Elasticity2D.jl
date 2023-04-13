@@ -263,23 +263,52 @@ end
     @inline av(T)     = (T[i + 1, j] + T[i + 2, j] + T[i + 1, j + 1] + T[i + 2, j + 1]) * 0.25
 
     @inbounds begin
+        # Gdt                 = get_G(MatParam[1]) * dt
+        _Gdt                = inv(get_G(MatParam[1]) * dt)
+        ηij                 = η[i, j]
         # # numerics
-        # dτ_r                = 1.0 / (θ_dτ + η[i, j] / (get_G(MatParam[1]) * dt) + 1.0) # original
-        dτ_r                = 1.0 / (θ_dτ / η[i, j] + 1.0 / η_vep[i, j]) # equivalent to dτ_r = @. 1.0/(θ_dτ + η/(G*dt) + 1.0)
+        dτ_r                = 1.0 / (θ_dτ + η[i, j] * _Gdt + 1.0) # original
+        # dτ_r                = 1.0 / (θ_dτ / η[i, j] + 1.0 / η_vep[i, j]) # equivalent to dτ_r = @. 1.0/(θ_dτ + η/(G*dt) + 1.0)
         # # Setup up input for GeoParams.jl
         # args                = (; dt=dt, P = 1e6 * (1 - z[j]) , T=av(T), τII_old=0.0)
         args                = (; dt=dt, P = (args_η.P[i, j]), depth = abs(args_η.depth[j]), T=av(T), τII_old=0.0)
-        # args                = (; dt=dt, P = args_η.P[i, j] + 7.191237228154622e10, depth = abs(args_η.depth[j]), T=av(T), τII_old=0.0)
         εij_p               = εxx[i, j]+1e-25, εyy[i, j]+1e-25, gather(εxyv).+1e-25
         τij_p_o             = τxx_o[i,j], τyy_o[i,j], gather(τxyv_o)
         phases              = (1, 1, (1,1,1,1)) # for now hard-coded for a single phase
         # update stress and effective viscosity
         τij, τII[i, j], ηᵢ  = compute_τij(MatParam, εij_p, args, τij_p_o, phases)
-        # ηᵢ                  = clamp(ηᵢ, 1e0, 1e6)
-        τxx[i, j]          += dτ_r * (-(τxx[i,j]) + τij[1] ) / ηᵢ # NOTE: from GP Tij = 2*η_vep * εij
-        τyy[i, j]          += dτ_r * (-(τyy[i,j]) + τij[2] ) / ηᵢ 
-        τxy[i, j]          += dτ_r * (-(τxy[i,j]) + τij[3] ) / ηᵢ 
-        η_vep[i, j]         = ηᵢ
+
+        εxy_p   = 0.25 * sum(εij_p[3])
+        τxy_p_o = 0.25 * sum(τij_p_o[3])
+    
+        # Viscous stress
+        a           = 0.5 / ηij
+        εxx_visc    = a * τij[1]
+        εyy_visc    = a * τij[2]
+        εxy_visc    = a * τij[3]
+        # Elastic stress
+        a           = 0.5 * _Gdt
+        εxx_el      = a * (τij[1] - τij_p_o[1])
+        εyy_el      = a * (τij[2] - τij_p_o[2])
+        εxy_el      = a * (τij[3] - τxy_p_o)
+        # Plastic stress
+        εxx_pl      = εij_p[1] - εxx_visc - εxx_el
+        εyy_pl      = εij_p[2] - εyy_visc - εyy_el
+        εxy_pl      = εxy_p    - εxy_visc - εxy_el
+        # @show εxx_pl
+        τxx[i,j]   += dτ_r * (-(τxx[i,j]-τij_p_o[1]) *  ηij * _Gdt - τxx[i,j] + 2.0 * ηij * (εij_p[1] - εxx_pl) ) # NOTE: from GP Tij = 2*η_vep * εij
+        τyy[i,j]   += dτ_r * (-(τyy[i,j]-τij_p_o[2]) *  ηij * _Gdt - τyy[i,j] + 2.0 * ηij * (εij_p[2] - εyy_pl) ) 
+        τxy[i,j]   += dτ_r * (-(τxy[i,j]-τxy_p_o)    *  ηij * _Gdt - τxy[i,j] + 2.0 * ηij * (εxy_p    - 0.5*εxy_pl) ) 
+        η_vep[i, j] = ηᵢ
+
+        # # ηᵢ                  = clamp(ηᵢ, 1e0, 1e6)
+        # # τxx[i, j]          += dτ_r * (-(τxx[i,j]) + τij[1] ) / ηᵢ # NOTE: from GP Tij = 2*η_vep * εij
+        # # τyy[i, j]          += dτ_r * (-(τyy[i,j]) + τij[2] ) / ηᵢ 
+        # # τxy[i, j]          += dτ_r * (-(τxy[i,j]) + τij[3] ) / ηᵢ 
+        # τxx[i, j]          += dτ_r * (-(τxx[i,j] - τij_p_o[1]) * ηᵢ / Gdt - τxx[i,j] + τij[1] ) # NOTE: from GP Tij = 2*η_vep * εij
+        # τyy[i, j]          += dτ_r * (-(τyy[i,j] - τij_p_o[2]) * ηᵢ / Gdt - τyy[i,j] + τij[2] ) 
+        # τxy[i, j]          += dτ_r * (-(τxy[i,j] - sum(τij_p_o[3])/3 ) * ηᵢ / Gdt - τxy[i,j] + τij[3] ) 
+        # η_vep[i, j]         = ηᵢ
     end
     
     return nothing
