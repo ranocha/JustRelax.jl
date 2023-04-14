@@ -1,13 +1,99 @@
+ENV["PS_PACKAGE"] = :Threads
+
 using JustRelax
 
 # needs this branch of GeoParams , uncomment line below to install it
 # using Pkg; Pkg.add(url="https://github.com/JuliaGeodynamics/GeoParams.jl"; rev="adm-arrhenius_dim")
 
 # setup ParallelStencil.jl environment
-model = PS_Setup(:gpu, Float64, 2)
+model = PS_Setup(:Threads, Float64, 2)
 environment!(model)
 
 using Printf, LinearAlgebra, GeoParams, GLMakie, SpecialFunctions
+
+# PARTICLES #################################################
+pth = "C:\\Users\\albert\\Desktop\\JustPIC.jl"
+using MuladdMacro
+using ParallelStencil.FiniteDifferences2D
+
+using StencilInterpolations
+
+include("src/particles/particles.jl")
+include("src/particles/utils.jl")
+include("src/particles/advection.jl")
+include("src/particles/injection.jl")
+include("src/particles/shuffle_vertex.jl")
+include("src/particles/staggered/centered.jl")
+include("src/particles/staggered/velocity.jl")
+include("src/particles/data.jl")
+
+function twoxtwo_particles2D(nxcell, max_xcell, min_xcell, x, y, dx, dy, nx, ny)
+    ncells = nx * ny
+    np = max_xcell * ncells
+    dx_2 = dx * 0.5
+    dy_2 = dy * 0.5
+    px, py = ntuple(_ -> fill(NaN, max_xcell, nx, ny), Val(2))
+    # min_xcell = ceil(Int, nxcell / 2)
+    # min_xcell = 4
+
+    # index = zeros(UInt32, np)
+    inject = falses(nx, ny)
+    index = falses(max_xcell, nx, ny)
+    @inbounds for j in 1:ny, i in 1:nx
+        # center of the cell
+        x0, y0 = x[i], y[j]
+        # fill index array
+        for l in 1:nxcell
+            px[l, i, j] = x0 + dx_2 * (1.0 + 0.8 * (rand() - 0.5))
+            py[l, i, j] = y0 + dy_2 * (1.0 + 0.8 * (rand() - 0.5))
+            index[l, i, j] = true
+        end
+    end
+
+    if ENV["PS_PACKAGE"] === "CUDA"
+        pxi = CuArray.((px, py))
+        return Particles(
+            pxi, CuArray(index), CuArray(inject), nxcell, max_xcell, min_xcell, np, (nx, ny)
+        )
+
+    else
+        return Particles(
+            (px, py), index, inject, nxcell, max_xcell, min_xcell, np, (nx, ny)
+        )
+    end
+end
+
+# function velocity_grids(xvi::NTuple{2,T}, di) where {T}
+#     dx, dy = di
+#     # yvx = xvi[2][1]-dy/2:dy:xvi[2][end]+dy/2
+#     # xvy = xvi[1][1]-dx/2:dx:xvi[1][end]+dx/2
+#     # grid_vx = (xvi[1], yvx)
+#     # grid_vy = (xvy, xvi[2])
+
+#     xvx = (xvi[1][1] - dx / 2):dx:(xvi[1][end] + dx / 2)
+#     yvy = (xvi[2][1] - dy / 2):dy:(xvi[2][end] + dy / 2)
+#     grid_vx = (xvx, xvi[2])
+#     grid_vy = (xvi[1], yvy)
+
+#     return grid_vx, grid_vy
+# end
+
+function velocity_grids(xci, xvi, di)
+    dx, dy = di
+    # yvx = xvi[2][1]-dy/2:dy:xvi[2][end]+dy/2
+    # xvy = xvi[1][1]-dx/2:dx:xvi[1][end]+dx/2
+    # grid_vx = (xvi[1], yvx)
+    # grid_vy = (xvy, xvi[2])
+
+    # yVx = (xci[2][1] - dx):dx:(xci[2][end] + dx)
+    yVx = LinRange(xci[2][1] - dx, xci[2][end] + dx, length(xci[2])+2)
+    xVy = LinRange(xci[1][1] - dy, xci[1][end] + dy, length(xci[1])+2)
+    grid_vx = (xvi[1], yVx)
+    grid_vy = (xVy, xvi[2])
+
+    return grid_vx, grid_vy
+end
+#############################################################
 
 # function to compute strain rate (compulsory)
 @inline function custom_εII(a::CustomRheology, TauII; args...)
@@ -226,6 +312,24 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     )
     # ----------------------------------------------------
 
+    # Initialize particles -------------------------------
+    nxcell, max_xcell, min_xcell = 8, 10, 6
+    particles = twoxtwo_particles2D(
+        nxcell, max_xcell, min_xcell, xvi[1], xvi[2], di[1], di[2], nx, ny
+    )
+    # velocity grids
+    grid_vx, grid_vy = velocity_grids(xci, xvi, di)
+    # temperature
+    pT = similar(particles.coords[1])
+    ρCₚp = similar(pT)
+    ρCp = @fill(ρg[2][1]/9.81*1200, ni.+1...)
+    
+    grid2particle_xvertex!(ρCₚp, xvi, ρCp, particles.coords)
+ 
+    # gathering_xvertex!(thermal.T, pT, xvi, particles.coords)
+    particle_args = (pT, ρCₚp)
+    # ----------------------------------------------------
+
     # IO ----- -------------------------------------------
     # if it does not exist, make folder where figures are stored
     !isdir(figdir) && mkpath(figdir)
@@ -251,7 +355,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     t, it = 0.0, 0
     nt    = 1_000
     local iters
-    while it < nt
+    while it < 5
 
         # Update buoyancy and viscosity -
         args_ηv = (; T = thermal.T, P = stokes.P, depth = xci[2], dt=Inf)
@@ -291,6 +395,22 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
             dt 
         )
         # ------------------------------
+
+        # Advection --------------------
+        # interpolate fields from grid vertices to particles
+        grid2particle_xvertex!(pT, xvi, thermal.T, particles.coords)
+        # int2part_vertex!(pT, thermal.T, thermal.Told, particles, xvi)
+        # advect particles in space
+        V = (stokes.V.Vx, stokes.V.Vy)
+        advection_RK2!(particles, V, grid_vx, grid_vy, dt, 2 / 3)
+        # advect particles in memory
+        shuffle_particles_vertex!(particles, xvi, particle_args)
+        # check if we need to inject particles
+        @show inject = check_injection(particles)
+        inject && inject_particles!(particles, particle_args, (thermal.T,), xvi)
+        # interpolate fields from particle to grid vertices
+        gathering_xvertex!(thermal.T[2:end-1, :], pT, xvi, particles.coords)
+        # gather_temperature_xvertex!(thermal.T, pT, ρCₚp, xvi, particles.coords)
 
         @show it += 1
         t += dt
@@ -334,7 +454,7 @@ function run()
     thermal_convection2D(; figdir=figdir, ar=ar,nx=nx, ny=ny);
 end
 
-run()
+# run()
 
 # x = Array(@. stokes.P * sind(30) )
 
@@ -351,3 +471,7 @@ run()
 # lines(Ty.*1e-6, z.*1e-3)
 # lines!(Ty.*1e-6, z.*1e-3)
 # # vlines!(30)
+
+@edit grid2particle_xvertex!(ρCₚp, xvi, ρCp, particles.coords)
+ 
+@btime grid2particle_xvertex!($ρCₚp, $xvi, $ρCp, $particles.coords)

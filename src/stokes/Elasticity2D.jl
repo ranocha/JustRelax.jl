@@ -121,25 +121,7 @@ end
         @inn(Vy) +
         (-@d_ya(P) * _dy + @d_ya(τyy) * _dy + @d_xi(τxyv) * _dx - @av_ya(ρgy)) * ηdτ /
         @harm_ya(ητ)
-        return
-end
-
-@parallel_indices (i, j) function compute_Res!(Rx, Ry, P, τxx, τyy, τxy, ρgx, ρgy, _dx, _dy)
-    # Again, indices i, j are captured by the closure
-    @inbounds @inline d_xa(A) = (A[i + 1, j] - A[i, j]) * _dx
-    @inbounds @inline d_ya(A) = (A[i, j + 1] - A[i, j]) * _dy
-    @inbounds @inline d_xi(A) = (A[i + 1, j + 1] - A[i, j + 1]) * _dx
-    @inbounds @inline d_yi(A) = (A[i + 1, j + 1] - A[i + 1, j]) * _dy
-    @inbounds @inline av_xa(A) = (A[i + 1, j] + A[i, j]) * 0.5
-    @inbounds @inline av_ya(A) = (A[i, j + 1] + A[i, j]) * 0.5
-
-    if i ≤ size(Rx, 1) && j ≤ size(Rx, 2)
-        @inbounds Rx[i, j] = d_xa(τxx) + d_yi(τxy) - d_xa(P) - av_xa(ρgx)
-    end
-    if i ≤ size(Ry, 1) && j ≤ size(Ry, 2)
-        @inbounds Ry[i, j] = d_ya(τyy) + d_xi(τxy) - d_ya(P) - av_ya(ρgy)
-    end
-    return nothing
+    return
 end
 
 ## Compressible - GeoParams
@@ -163,13 +145,13 @@ end
 
 @parallel_indices (i, j) function compute_Res!(Rx, Ry, P, τxx, τyy, τxy, ρgx, ρgy, _dx, _dy)
     # Again, indices i, j are captured by the closure
-    @inbounds @inline d_xa(A) = (A[i + 1, j] - A[i, j]) * _dx
-    @inbounds @inline d_ya(A) = (A[i, j + 1] - A[i, j]) * _dy
-    @inbounds @inline d_xi(A) = (A[i + 1, j + 1] - A[i, j + 1]) * _dx
-    @inbounds @inline d_yi(A) = (A[i + 1, j + 1] - A[i + 1, j]) * _dy
-    @inbounds @inline av_xa(A) = (A[i + 1, j] + A[i, j]) * 0.5
-    @inbounds @inline av_ya(A) = (A[i, j + 1] + A[i, j]) * 0.5
-
+    Base.@propagate_inbounds @inline d_xa(A) = (A[i + 1, j] - A[i, j]) * _dx
+    Base.@propagate_inbounds @inline d_ya(A) = (A[i, j + 1] - A[i, j]) * _dy
+    Base.@propagate_inbounds @inline d_xi(A) = (A[i + 1, j + 1] - A[i, j + 1]) * _dx
+    Base.@propagate_inbounds @inline d_yi(A) = (A[i + 1, j + 1] - A[i + 1, j]) * _dy
+    Base.@propagate_inbounds @inline av_xa(A) = (A[i + 1, j] + A[i, j]) * 0.5
+    Base.@propagate_inbounds @inline av_ya(A) = (A[i, j + 1] + A[i, j]) * 0.5
+   
     if i ≤ size(Rx, 1) && j ≤ size(Rx, 2)
         @inbounds Rx[i, j] = d_xa(τxx) + d_yi(τxy) - d_xa(P) - av_xa(ρgx)
     end
@@ -184,12 +166,12 @@ end
 )
 
     # Again, indices i, j are captured by the closure
-    @inline d_xa(A) = (A[i + 1, j] - A[i, j]) * _dx
-    @inline d_ya(A) = (A[i, j + 1] - A[i, j]) * _dy
-    @inline d_xi(A) = (A[i + 1, j + 1] - A[i, j + 1]) * _dx
-    @inline d_yi(A) = (A[i + 1, j + 1] - A[i + 1, j]) * _dy
-    @inline av_xa(A) = (A[i + 1, j] + A[i, j]) * 0.5
-    @inline av_ya(A) = (A[i, j + 1] + A[i, j]) * 0.5
+    Base.@propagate_inbounds @inline d_xa(A) = (A[i + 1, j] - A[i, j]) * _dx
+    Base.@propagate_inbounds @inline d_ya(A) = (A[i, j + 1] - A[i, j]) * _dy
+    Base.@propagate_inbounds @inline d_xi(A) = (A[i + 1, j + 1] - A[i, j + 1]) * _dx
+    Base.@propagate_inbounds @inline d_yi(A) = (A[i + 1, j + 1] - A[i + 1, j]) * _dy
+    Base.@propagate_inbounds @inline av_xa(A) = (A[i + 1, j] + A[i, j]) * 0.5
+    Base.@propagate_inbounds @inline av_ya(A) = (A[i, j + 1] + A[i, j]) * 0.5
 
     if all((i, j) .≤ size(Rx))
         @inbounds R = Rx[i, j] = d_xa(τxx) + d_yi(τxy) - d_xa(P) - av_xa(ρgx)
@@ -208,7 +190,7 @@ end
 @parallel function compute_τ!(τxx, τyy, τxy, εxx, εyy, εxy, η, θ_dτ)
     @all(τxx) = @all(τxx) + (-@all(τxx) + 2.0 * @all(η) * @all(εxx)) * 1.0 / (θ_dτ + 1.0)
     @all(τyy) = @all(τyy) + (-@all(τyy) + 2.0 * @all(η) * @all(εyy)) * 1.0 / (θ_dτ + 1.0)
-    @inn(τxy) = @inn(τxy) + (-@inn(τxy) + 2.0 * @av(η) * @inn(εxy)) * 1.0 / (θ_dτ + 1.0)
+    @inn(τxy) = @inn(τxy) + (-@inn(τxy) + 2.0 * @harm(η) * @inn(εxy)) * 1.0 / (θ_dτ + 1.0)
     return nothing
 end
 
@@ -233,7 +215,7 @@ end
         (
             -(@inn(τxy) - @inn(τxy_o)) * @av(η) / (@av(G) * dt) - @inn(τxy) +
             2.0 * @av(η) * @inn(εxy)
-        ) * 1.0 / (θ_dτ + @av(η) / (@av(G) * dt) + 1.0)
+        ) * 1.0 / (θ_dτ + @harm(η) / (@av(G) * dt) + 1.0)
 
     return nothing
 end
@@ -258,17 +240,27 @@ end
     dt,
     θ_dτ
 )
+
+    nx, ny = size(η)
+
     # convinience closure
     @inline gather(A) = A[i, j], A[i + 1, j], A[i, j + 1], A[i + 1, j + 1] 
     @inline av(T)     = (T[i + 1, j] + T[i + 2, j] + T[i + 1, j + 1] + T[i + 2, j + 1]) * 0.25
+    @inline function maxloc(A)
+        max(
+            A[i, j],
+            A[min(i+1, nx), j],
+            A[max(i-1, 1), j],
+            A[i, min(j+1, ny)],
+            A[i, max(j-1, 1),],
+        )
+    end
 
     @inbounds begin
-        # Gdt                 = get_G(MatParam[1]) * dt
         _Gdt                = inv(get_G(MatParam[1]) * dt)
         ηij                 = η[i, j]
         # # numerics
-        dτ_r                = 1.0 / (θ_dτ + η[i, j] * _Gdt + 1.0) # original
-        # dτ_r                = 1.0 / (θ_dτ / η[i, j] + 1.0 / η_vep[i, j]) # equivalent to dτ_r = @. 1.0/(θ_dτ + η/(G*dt) + 1.0)
+        dτ_r                = 1.0 / (θ_dτ + maxloc(η) * _Gdt + 1.0) # original
         # # Setup up input for GeoParams.jl
         # args                = (; dt=dt, P = 1e6 * (1 - z[j]) , T=av(T), τII_old=0.0)
         args                = (; dt=dt, P = (args_η.P[i, j]), depth = abs(args_η.depth[j]), T=av(T), τII_old=0.0)
@@ -552,6 +544,46 @@ tupleize(v::Tuple) = v
     return nothing
 end
 
+
+@parallel_indices (i, j) function maxloc!(B, A)
+
+    nx, ny = size(A)
+
+    @inline function harmloc(A)
+        4 * (inv.((
+            A[i, j],
+            A[min(i+1, nx), j],
+            A[max(i-1, 1), j],
+            A[i, min(j+1, ny)],
+            A[i, max(j-1, 1),],
+        )) |> sum |> inv)
+    end
+
+    @inline function maxloc(A)
+        max(
+            A[i, j],
+            A[min(i+1, nx), j],
+            A[max(i-1, 1), j],
+            A[i, min(j+1, ny)],
+            A[i, max(j-1, 1),],
+        )
+    end
+
+    @inline function minloc(A)
+        min(
+            A[i, j],
+            A[min(i+1, nx), j],
+            A[max(i-1, 1), j],
+            A[i, min(j+1, ny)],
+            A[i, max(j-1, 1),],
+        )
+    end
+
+    B[i, j] =  maxloc(A)
+    return 
+end
+
+
 function JustRelax.solve!(
     stokes::StokesArrays{ViscoElastic,A,B,C,D,2},
     thermal::ThermalArrays,
@@ -577,8 +609,9 @@ function JustRelax.solve!(
     # z = LinRange(di[2]*0.5, 1.0-di[2]*0.5, ny)
     # ~preconditioner
     ητ = deepcopy(η)
-    @parallel compute_maxloc!(ητ, η)
-    apply_free_slip!((freeslip_x=true, freeslip_y=true), ητ, ητ)
+    @parallel maxloc!(ητ, η)
+    # @parallel compute_maxloc!(ητ, η)
+    # apply_free_slip!((freeslip_x=true, freeslip_y=true), ητ, ητ)
 
     Kb = get_Kb(MatParam)
 
@@ -635,6 +668,8 @@ function JustRelax.solve!(
                 θ_dτ,
             )
             @parallel center2vertex!(stokes.τ.xy, stokes.τ.xy_c)
+            
+            # @parallel maxloc!(ητ, η_vep)
             @parallel compute_V!(
                 @tuple(stokes.V)...,
                 stokes.P,
@@ -647,7 +682,6 @@ function JustRelax.solve!(
                 _di...,
             )
             # apply boundary conditions boundary conditions
-            # apply_free_slip!(freeslip, stokes.V.Vx, stokes.V.Vy)
             flow_bcs!(stokes, flow_bcs, di)
 
         end
