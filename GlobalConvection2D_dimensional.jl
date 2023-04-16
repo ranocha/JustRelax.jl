@@ -105,8 +105,10 @@ end
 # --------------------------------------------------------------------------------
 
 @parallel_indices (i, j) function compute_ρg!(ρg, rheology, args)
-
-    @inline av(T) = 0.25* (T[i+1,j] + T[i+2,j] + T[i+1,j+1] + T[i+2,j+1]) - 273.0
+   
+    i1, j1 = i + 1, j + 1
+    i2 = i + 2
+    @inline av(T) = 0.25 * (T[i1,j] + T[i2,j] + T[i1,j1] + T[i2,j1]) - 273.0
 
     @inbounds ρg[i, j] = -compute_density(rheology, (; T = av(args.T), P=args.P[i, j])) * compute_gravity(rheology.Gravity[1])
 
@@ -114,8 +116,6 @@ end
 end
 
 Rayleigh_number(ρ, α, ΔT, κ, η0) = ρ * 9.81 * α * ΔT * 2890e3^3 * inv(κ * η0) 
-
-# Ra = Rayleigh_number(rheology.Density[1].ρ0.val, rheology.Density[1].α.val, 3e3-300, κ, v_args.η0) 
 
 function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
 
@@ -156,6 +156,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
         Elasticity        = SetConstantElasticity(; G=G0, ν=0.5),
         Gravity           = ConstantGravity(; g=-9.81),
     )
+   
     rheology_depth    = SetMaterialParams(;
         Name              = "Mantle",
         Phase             = 1,
@@ -182,9 +183,9 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     )
     # initialize thermal profile - Half space cooling
     adiabat     = 0.3 # adiabatic gradient
-    Tp          = 1600
+    Tp          = 1900
     Tm          = Tp + adiabat * 2890
-    Tmin, Tmax  = 300.0, 3.0e3
+    Tmin, Tmax  = 300.0, 3.5e3
     # thermal.T  .= 1600.0
     @parallel init_T!(thermal.T, xvi[2], κ, Tm, Tp, Tmin, Tmax)
     thermal_bcs!(thermal.T, thermal_bc)
@@ -251,7 +252,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     t, it = 0.0, 0
     nt    = 1_000
     local iters
-    while it < nt
+    while it < 10
 
         # Update buoyancy and viscosity -
         args_ηv = (; T = thermal.T, P = stokes.P, depth = xci[2], dt=Inf)
@@ -296,7 +297,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
         t += dt
 
         # Plotting ---------------------
-        if it == 1 || rem(it, 5) == 0
+        if it == 1 || rem(it, 1) == 0
             fig = Figure(resolution = (1000, 1000), title = "t = $t")
             ax1 = Axis(fig[1,1], aspect = ar, title = "T - $(t/(1e6 * 3600 * 24 *365.25)) Ma")
             ax2 = Axis(fig[2,1], aspect = ar, title = "Vy")
@@ -335,19 +336,3 @@ function run()
 end
 
 run()
-
-# x = Array(@. stokes.P * sind(30) )
-
-# lines!(x[:], Y)
-
-# n    = 1_000
-# z    = LinRange(-40e3, 0e0, n)
-# P    = @. -3300 * z * 9.81
-# dTdP = 0.01
-# c    = 30e6
-# Ty   = @. P*sind(30)
-# Ty   = @. P*dTdP
-
-# lines(Ty.*1e-6, z.*1e-3)
-# lines!(Ty.*1e-6, z.*1e-3)
-# # vlines!(30)

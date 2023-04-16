@@ -613,6 +613,8 @@ function JustRelax.solve!(
     # @parallel compute_maxloc!(ητ, η)
     # apply_free_slip!((freeslip_x=true, freeslip_y=true), ητ, ητ)
 
+    rheology = tupleize(MatParam)
+
     Kb = get_Kb(MatParam)
 
     # errors
@@ -640,6 +642,12 @@ function JustRelax.solve!(
                 r,
                 θ_dτ,
             )
+
+            # Update buoyancy and viscosity -
+            args_ηv = (; T = thermal.T, P = stokes.P, dt=Inf)
+            @parallel (@idx ni) compute_viscosity_gp!(η, args_ηv, rheology)
+            @parallel (@idx ni) compute_ρg!(ρg[2], rheology[1], (T=thermal.T, P=stokes.P))
+            
             @parallel compute_strain_rate!(
                 stokes.ε.xx,
                 stokes.ε.yy,
@@ -663,7 +671,7 @@ function JustRelax.solve!(
                 η_vep,
                 args_η,
                 thermal.T,
-                tupleize(MatParam), # needs to be a tuple
+                rheology, # needs to be a tuple
                 dt,
                 θ_dτ,
             )
@@ -683,6 +691,8 @@ function JustRelax.solve!(
             )
             # apply boundary conditions boundary conditions
             flow_bcs!(stokes, flow_bcs, di)
+
+            # ------------------------------
 
         end
 
@@ -734,6 +744,35 @@ function JustRelax.solve!(
         norm_Ry=norm_Ry,
         norm_∇V=norm_∇V,
     )
+end
+
+
+# HELPER FUNCTIONS ---------------------------------------------------------------
+# visco-elasto-plastic with GeoParams
+@parallel_indices (i, j) function compute_viscosity_gp!(η, args, MatParam)
+
+    # convinience closure
+    @inline av(T)     = (T[i + 1, j] + T[i + 2, j] + T[i + 1, j + 1] + T[i + 2, j + 1]) * 0.25
+
+    @inbounds begin
+        args_ij       = (; dt = args.dt, P = (args.P[i, j]), T=av(args.T), τII_old=0.0)
+        εij_p         = 1.0, 1.0, (1.0, 1.0, 1.0, 1.0)
+        τij_p_o       = 0.0, 0.0, (0.0, 0.0, 0.0, 0.0)
+        phases        = 1, 1, (1,1,1,1) # for now hard-coded for a single phase
+        # # update stress and effective viscosity
+        _, _, η[i, j] = compute_τij(MatParam, εij_p, args_ij, τij_p_o, phases)
+    end
+    
+    return nothing
+end
+
+@parallel_indices (i, j) function compute_ρg!(ρg, rheology, args)
+
+    @inline av(T) = 0.25* (T[i+1,j] + T[i+2,j] + T[i+1,j+1] + T[i+2,j+1]) - 273.0
+
+    @inbounds ρg[i, j] = -compute_density(rheology, (; T = av(args.T), P=args.P[i, j])) * compute_gravity(rheology.Gravity[1])
+
+    return nothing
 end
 
 end # END OF MODULE
