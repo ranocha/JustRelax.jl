@@ -158,6 +158,7 @@ end
     if i ≤ size(Ry, 1) && j ≤ size(Ry, 2)
         @inbounds Ry[i, j] = d_ya(τyy) + d_xi(τxy) - d_ya(P) - av_ya(ρgy)
     end
+    
     return nothing
 end
 
@@ -594,7 +595,7 @@ function JustRelax.solve!(
     η,
     η_vep,
     args_η,
-    MatParam::MaterialParams,
+    MatParam,
     dt;
     iterMax=10e3,
     nout=500,
@@ -613,9 +614,8 @@ function JustRelax.solve!(
     # @parallel compute_maxloc!(ητ, η)
     # apply_free_slip!((freeslip_x=true, freeslip_y=true), ητ, ητ)
 
-    rheology = tupleize(MatParam)
-
-    Kb = get_Kb(MatParam)
+    rheology = tupleize(MatParam.linear)
+    Kb = get_Kb(MatParam.linear)
 
     # errors
     err = 2 * ϵ
@@ -644,9 +644,10 @@ function JustRelax.solve!(
             )
 
             # Update buoyancy and viscosity -
-            args_ηv = (; T = thermal.T, P = stokes.P, dt=Inf)
+            args_ηv = (; T = thermal.T, P = stokes.P, depth=args_η.depth, dt=Inf)
             @parallel (@idx ni) compute_viscosity_gp!(η, args_ηv, rheology)
             @parallel (@idx ni) compute_ρg!(ρg[2], rheology[1], (T=thermal.T, P=stokes.P))
+            @parallel maxloc!(ητ, η)
             
             @parallel compute_strain_rate!(
                 stokes.ε.xx,
@@ -718,7 +719,7 @@ function JustRelax.solve!(
             push!(norm_∇V, errs[3])
             push!(err_evo1, err)
             push!(err_evo2, iter)
-            if (verbose && err > ϵ) || (iter == iterMax)
+            # if (verbose && err > ϵ) || (iter == iterMax)
                 @printf(
                     "Total steps = %d, err = %1.3e [norm_Rx=%1.3e, norm_Ry=%1.3e, norm_∇V=%1.3e] \n",
                     iter,
@@ -727,9 +728,135 @@ function JustRelax.solve!(
                     norm_Ry[end],
                     norm_∇V[end]
                 )
-            end
+            # end
         end
     end
+
+    ## non linear
+
+    println("starting non linear iterations")
+    rheology = tupleize(MatParam.plastic)
+    Kb = get_Kb(MatParam.plastic)
+
+     # errors
+     err = 2 * ϵ
+     iter = 0
+     err_evo1 = Float64[]
+     err_evo2 = Float64[]
+     norm_Rx = Float64[]
+     norm_Ry = Float64[]
+     norm_∇V = Float64[]
+ 
+     # solver loop
+     wtime0 = 0.0
+    @show iter, err
+
+     while iter < 2 || (err > ϵ && iter ≤ iterMax)
+         wtime0 += @elapsed begin
+             @parallel compute_∇V!(stokes.∇V, stokes.V.Vx, stokes.V.Vy, _di...)
+             @parallel compute_P!(
+                 stokes.P,
+                 P_old,
+                 stokes.R.RP,
+                 stokes.∇V,
+                 η,
+                 Kb,
+                 dt,
+                 r,
+                 θ_dτ,
+             )
+ 
+            # Update buoyancy and viscosity -
+            args_ηv = (; T = thermal.T, P = stokes.P, depth=args_η.depth, dt=Inf)
+            @parallel (@idx ni) compute_viscosity_gp!(η, args_ηv, rheology)
+            @parallel (@idx ni) compute_ρg!(ρg[2], rheology[1], (T=thermal.T, P=stokes.P))
+            @parallel maxloc!(ητ, η)
+             
+             @parallel compute_strain_rate!(
+                 stokes.ε.xx,
+                 stokes.ε.yy,
+                 stokes.ε.xy,
+                 stokes.∇V,
+                 @tuple(stokes.V)...,
+                 _di...,
+             )
+             @parallel (@idx ni) compute_τ_gp!(
+                 stokes.τ.xx,
+                 stokes.τ.yy,
+                 stokes.τ.xy_c,
+                 stokes.τ.II,
+                 stokes.τ_o.xx,
+                 stokes.τ_o.yy,
+                 stokes.τ_o.xy,
+                 stokes.ε.xx,
+                 stokes.ε.yy,
+                 stokes.ε.xy,
+                 η,
+                 η_vep,
+                 args_η,
+                 thermal.T,
+                 rheology, # needs to be a tuple
+                 dt,
+                 θ_dτ,
+             )
+             @parallel center2vertex!(stokes.τ.xy, stokes.τ.xy_c)
+             
+             # @parallel maxloc!(ητ, η_vep)
+             @parallel compute_V!(
+                 @tuple(stokes.V)...,
+                 stokes.P,
+                 stokes.τ.xx,
+                 stokes.τ.yy,
+                 stokes.τ.xy,
+                 ηdτ,
+                 ρg...,
+                 ητ,
+                 _di...,
+             )
+             # apply boundary conditions boundary conditions
+             flow_bcs!(stokes, flow_bcs, di)
+ 
+             # ------------------------------
+ 
+         end
+
+         iter += 1
+
+         if iter % nout == 0 && iter > 2
+             @parallel (@idx ni) compute_Res!(
+                 stokes.R.Rx,
+                 stokes.R.Ry,
+                 stokes.P,
+                 stokes.τ.xx,
+                 stokes.τ.yy,
+                 stokes.τ.xy,
+                 ρg[1],
+                 ρg[2],
+                 _di...,
+             )
+             errs = ntuple(Val(3)) do i
+                 maximum(x->abs.(x), getfield(stokes.R, i))
+             end
+             err = maximum(errs)
+             push!(norm_Rx, errs[1])
+             push!(norm_Ry, errs[2])
+             push!(norm_∇V, errs[3])
+             push!(err_evo1, err)
+             push!(err_evo2, iter)
+             if (verbose && err > ϵ) || (iter == iterMax)
+                 @printf(
+                     "JODER Total steps = %d, err = %1.3e [norm_Rx=%1.3e, norm_Ry=%1.3e, norm_∇V=%1.3e] \n",
+                     iter,
+                     err,
+                     norm_Rx[end],
+                     norm_Ry[end],
+                     norm_∇V[end]
+                 )
+             end
+         end
+     end
+
+    println("Non linear iterations done in $iter iterations")
 
     if -Inf < dt < Inf 
         update_τ_o!(stokes)
@@ -755,7 +882,7 @@ end
     @inline av(T)     = (T[i + 1, j] + T[i + 2, j] + T[i + 1, j + 1] + T[i + 2, j + 1]) * 0.25
 
     @inbounds begin
-        args_ij       = (; dt = args.dt, P = (args.P[i, j]), T=av(args.T), τII_old=0.0)
+        args_ij       = (; dt = args.dt, P = (args.P[i, j]), T=av(args.T), depth=abs(args.depth[j]), τII_old=0.0)
         εij_p         = 1.0, 1.0, (1.0, 1.0, 1.0, 1.0)
         τij_p_o       = 0.0, 0.0, (0.0, 0.0, 0.0, 0.0)
         phases        = 1, 1, (1,1,1,1) # for now hard-coded for a single phase

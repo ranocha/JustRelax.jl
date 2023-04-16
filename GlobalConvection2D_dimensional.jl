@@ -12,13 +12,13 @@ using Printf, LinearAlgebra, GeoParams, GLMakie, SpecialFunctions
 # function to compute strain rate (compulsory)
 @inline function custom_εII(a::CustomRheology, TauII; args...)
     η = custom_viscosity(a; args...)
-    return (TauII / η) * 0.5
+    return TauII / η * 0.5
 end
 
 # function to compute deviatoric stress (compulsory)
 @inline function custom_τII(a::CustomRheology, EpsII; args...)
     η = custom_viscosity(a; args...)
-    return 2.0 * (η * EpsII)
+    return 2.0 * η * EpsII
 end
 
 # helper function (optional)
@@ -26,7 +26,7 @@ end
     (; η0, Ea, Va, T0, R, cutoff) = a.args
     η = η0 * exp((Ea + P * Va) / (R * T) - Ea / (R * T0))
     # correction = (depth ≤ 660e3) + (2740e3 ≥ depth > 660e3) * 1e1  + (depth > 2740e3) * 1e-2
-    correction = (depth ≤ 660e3) + (2740e3 ≥ depth > 660e3) * 3e1  + (depth > 2740e3) * 1e-1
+    correction = (depth ≤ 660e3) + (2740e3 ≥ depth > 660e3) * 1e1  + (depth > 2740e3) * 1e-1
     η = clamp(η * correction, cutoff...)
 end
 
@@ -131,19 +131,22 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
 
     # create rheology struct
     # v_args = (; η0=5e20, Ea=100e3, Va=1.6e-6, T0=1.6e3, R=8.3145, cutoff=(1e16, 1e25))
-    # v_args = (; η0=5e20, Ea=200e3, Va=2.6e-6, T0=1.6e3, R=8.3145, cutoff=(1e16, 1e25))
-    v_args = (; η0=5e20, Ea=370e3, Va=3.65e-6, T0=1.6e3, R=8.3145, cutoff=(1e18, 1e25))
+    v_args = (; η0=5e20, Ea=200e3, Va=2.6e-6, T0=1.6e3, R=8.3145, cutoff=(1e16, 1e25))
+    # v_args = (; η0=5e20, Ea=370e3, Va=3.65e-6, T0=1.6e3, R=8.3145, cutoff=(1e18, 1e25))
     # v_args = (; η0=1.2e21, Ea=35e3, Va=0.0, T0=1.6e3, R=8.3145, cutoff=(1e16, 1e25))
     creep = CustomRheology(custom_εII, custom_τII, v_args)
 
     # Physical properties using GeoParams ----------------
-    η_reg     = 1e10
+    η_reg     = 1e12
     G0        = 80e9                                                             # shear modulus
     cohesion  = 30e6
     friction  = asind(0.01)
-    pl        = DruckerPrager_regularised(; C = cohesion, ϕ=friction, η_vp=η_reg, Ψ=0.0) # non-regularized plasticity
+    # friction  = 30.0
+    # pl        = DruckerPrager_regularised(; C = cohesion, ϕ=30, η_vp=η_reg, Ψ=0.0) # non-regularized plasticity
+    pl        = DruckerPrager(; C = cohesion, ϕ=friction, Ψ=0.0) # non-regularized plasticity
     el        = SetConstantElasticity(; G=G0, ν=0.5)                             # elastic spring
     # creep     = ArrheniusType2(; η0 = 1e22, T0=1600, Ea=100e3, Va=1.0e-6)       # Arrhenius-like (T-dependant) viscosity
+    # creep     = LinearViscous(; η = 5e20)       # Arrhenius-like (T-dependant) viscosity
 
     # Define rheolgy struct
     rheology = SetMaterialParams(;
@@ -199,7 +202,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
 
     yv = [y for x in xvi[1], y in xvi[2]]./2890e3
     xv = [x for x in xvi[1], y in xvi[2]]./2890e3
-    thermal.T[2:end-1,:] .+= PTArray(@. exp(-(10*(xv-4)^2 + 80*(yv+0.75)^2)) * 50)
+    thermal.T[2:end-1,:] .+= PTArray(@. exp(-(10*(xv-4)^2 + 80*(yv+1-0.85)^2)) * 50)
     @views thermal.T[:, 1]   .= Tmax
     @views thermal.T[:, end] .= Tmin
     # ----------------------------------------------------
@@ -207,7 +210,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     # STOKES ---------------------------------------------
     # Allocate arrays needed for every Stokes problem
     stokes          = StokesArrays(ni, ViscoElastic)
-    pt_stokes       = PTStokesCoeffs(li, di; ϵ=5e-5,  CFL = 1.0 / √2)
+    pt_stokes       = PTStokesCoeffs(li, di; ϵ=1e-5,  CFL = 1.0 / √2)
     # Buoyancy forces
     ρg              = @zeros(ni...), @zeros(ni...)
     @parallel (@idx ni) compute_ρg!(ρg[2], rheology, (T=thermal.T, P=stokes.P))
@@ -252,7 +255,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     t, it = 0.0, 0
     nt    = 1_000
     local iters
-    while it < 10
+    while it < 250
 
         # Update buoyancy and viscosity -
         args_ηv = (; T = thermal.T, P = stokes.P, depth = xci[2], dt=Inf)
@@ -272,12 +275,14 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
             η,
             η_vep,
             args_η,
-            rheology_depth, # do a few initial time-steps without plasticity to improve convergence
+            # it > 3 ? rheology_depth : rheology, # do a few initial time-steps without plasticity to improve convergence
+            (; linear= rheology, plastic=rheology), # do a few initial time-steps without plasticity to improve convergence
+            # rheology, # d/o a few initial time-steps without plasticity to improve convergence
             dt,
-            iterMax=250e3,
-            nout=1000,
+            iterMax=50e3,
+            nout=1e3,
         )
-        dt = compute_dt(stokes, di, dt_diff)
+        dt = compute_dt(stokes, di, dt_diff) * 1
         # ------------------------------
 
         # Thermal solver ---------------
@@ -297,7 +302,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
         t += dt
 
         # Plotting ---------------------
-        if it == 1 || rem(it, 1) == 0
+        if it == 1 || rem(it, 5) == 0
             fig = Figure(resolution = (1000, 1000), title = "t = $t")
             ax1 = Axis(fig[1,1], aspect = ar, title = "T - $(t/(1e6 * 3600 * 24 *365.25)) Ma")
             ax2 = Axis(fig[2,1], aspect = ar, title = "Vy")
