@@ -219,7 +219,6 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     η               = @ones(ni...)
     args_ηv         = (; T = thermal.T, P = stokes.P, depth = xci[2], dt = Inf)
     @parallel (@idx ni) compute_viscosity_gp!(η, args_ηv, (rheology,))
-    @parallel (nx, 5:10) compute_viscosity_gp!(η, args_ηv, (rheology,))
     η_vep           = deepcopy(η)
     dt_elasticity   = Inf
     # Boundary conditions
