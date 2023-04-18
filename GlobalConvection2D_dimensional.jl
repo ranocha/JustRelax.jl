@@ -26,7 +26,7 @@ end
     (; η0, Ea, Va, T0, R, cutoff) = a.args
     η = η0 * exp((Ea + P * Va) / (R * T) - Ea / (R * T0))
     # correction = (depth ≤ 660e3) + (2740e3 ≥ depth > 660e3) * 1e1  + (depth > 2740e3) * 1e-2
-    correction = (depth ≤ 660e3) + (2740e3 ≥ depth > 660e3) * 1e1  + (depth > 2740e3) * 1e-1
+    correction = (depth ≤ 660e3) + (2740e3 ≥ depth > 660e3) * 1e1  + (depth > 2700e3) * 1e0
     η = clamp(η * correction, cutoff...)
 end
 
@@ -131,19 +131,19 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
 
     # create rheology struct
     # v_args = (; η0=5e20, Ea=100e3, Va=1.6e-6, T0=1.6e3, R=8.3145, cutoff=(1e16, 1e25))
-    v_args = (; η0=5e20, Ea=200e3, Va=2.6e-6, T0=1.6e3, R=8.3145, cutoff=(1e16, 1e25))
-    # v_args = (; η0=5e20, Ea=370e3, Va=3.65e-6, T0=1.6e3, R=8.3145, cutoff=(1e18, 1e25))
+    # v_args = (; η0=5e20, Ea=200e3, Va=2.6e-6, T0=1.6e3, R=8.3145, cutoff=(1e16, 1e25))
+    v_args = (; η0=5e20, Ea=370e3, Va=3.65e-6, T0=1.6e3, R=8.3145, cutoff=(1e18, 1e25))
     # v_args = (; η0=1.2e21, Ea=35e3, Va=0.0, T0=1.6e3, R=8.3145, cutoff=(1e16, 1e25))
     creep = CustomRheology(custom_εII, custom_τII, v_args)
 
     # Physical properties using GeoParams ----------------
     η_reg     = 1e12
-    G0        = 80e9                                                             # shear modulus
-    cohesion  = 30e6
+    G0        = 80e9    # shear modulus
+    cohesion  = 30e6 * 0
     friction  = asind(0.01)
     # friction  = 30.0
-    # pl        = DruckerPrager_regularised(; C = cohesion, ϕ=30, η_vp=η_reg, Ψ=0.0) # non-regularized plasticity
-    pl        = DruckerPrager(; C = cohesion, ϕ=friction, Ψ=0.0) # non-regularized plasticity
+    pl        = DruckerPrager_regularised(; C = cohesion, ϕ=friction, η_vp=η_reg, Ψ=0.0) # non-regularized plasticity
+    # pl        = DruckerPrager(; C = 30e6, ϕ=friction, Ψ=0.0) # non-regularized plasticity
     el        = SetConstantElasticity(; G=G0, ν=0.5)                             # elastic spring
     # creep     = ArrheniusType2(; η0 = 1e22, T0=1600, Ea=100e3, Va=1.0e-6)       # Arrhenius-like (T-dependant) viscosity
     # creep     = LinearViscous(; η = 5e20)       # Arrhenius-like (T-dependant) viscosity
@@ -193,8 +193,8 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     @parallel init_T!(thermal.T, xvi[2], κ, Tm, Tp, Tmin, Tmax)
     thermal_bcs!(thermal.T, thermal_bc)
     # Elliptical temperature anomaly 
-    # δT          = 2.0              # thermal perturbation (in %)
-    # random_perturbation!(thermal.T, δT, (lx*1/8, lx*7/8), (-660e3, -2600e3), xvi)
+    δT          = 2.0              # thermal perturbation (in %)
+    random_perturbation!(thermal.T, δT, (lx*1/8, lx*7/8), (-660e3, -2600e3), xvi)
     # δT          = 10.0              # thermal perturbation (in %)
     # xc, yc      = 0.5*lx, -0.75*ly  # origin of thermal anomaly
     # r           = 150e3             # radius of perturbation
@@ -202,7 +202,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
 
     yv = [y for x in xvi[1], y in xvi[2]]./2890e3
     xv = [x for x in xvi[1], y in xvi[2]]./2890e3
-    thermal.T[2:end-1,:] .+= PTArray(@. exp(-(10*(xv-4)^2 + 80*(yv+1-0.85)^2)) * 50)
+    thermal.T[2:end-1,:] .+= PTArray(@. exp(-(10*(xv-4)^2 + 80*(yv + 0.75)^2)) * 50)
     @views thermal.T[:, 1]   .= Tmax
     @views thermal.T[:, end] .= Tmin
     # ----------------------------------------------------
@@ -219,6 +219,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     η               = @ones(ni...)
     args_ηv         = (; T = thermal.T, P = stokes.P, depth = xci[2], dt = Inf)
     @parallel (@idx ni) compute_viscosity_gp!(η, args_ηv, (rheology,))
+    @parallel (nx, 5:10) compute_viscosity_gp!(η, args_ηv, (rheology,))
     η_vep           = deepcopy(η)
     dt_elasticity   = Inf
     # Boundary conditions
@@ -253,19 +254,19 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
 
     # Time loop
     t, it = 0.0, 0
-    nt    = 1_000
+    nt    = 2_000
     local iters
-    while it < 250
+    while it < nt
 
         # Update buoyancy and viscosity -
         args_ηv = (; T = thermal.T, P = stokes.P, depth = xci[2], dt=Inf)
         @parallel (@idx ni) compute_viscosity_gp!(η, args_ηv, (rheology,))
         @parallel (@idx ni) compute_ρg!(ρg[2], rheology, (T=thermal.T, P=stokes.P))
         # ------------------------------
-
+ 
         # Stokes solver ----------------
         args_η = (; T = thermal.T, P = stokes.P, depth = xci[2], dt=dt)
-        iters = solve!(
+        λ, iters = solve!(
             stokes,
             thermal,
             pt_stokes,
@@ -275,13 +276,19 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
             η,
             η_vep,
             args_η,
-            # it > 3 ? rheology_depth : rheology, # do a few initial time-steps without plasticity to improve convergence
-            (; linear= rheology, plastic=rheology), # do a few initial time-steps without plasticity to improve convergence
+            # it > 3 ?  (; linear=rheology_depth,) : (; linear=rheology,), # do a few initial time-steps without plasticity to improve convergence
+            # (; linear=rheology, plastic=rheology), # do a few initial time-steps without plasticity to improve convergence
+            (; linear=rheology_depth, ), # do a few initial time-steps without plasticity to improve convergence
+            # (; linear=rheology, plastic=rheology_depth), # do a few initial time-steps without plasticity to improve convergence
             # rheology, # d/o a few initial time-steps without plasticity to improve convergence
             dt,
-            iterMax=50e3,
+            iterMax=150e3,
             nout=1e3,
-        )
+        );
+
+        @show sum(λ)
+
+        println("starting non linear iterations")
         dt = compute_dt(stokes, di, dt_diff) * 1
         # ------------------------------
 
@@ -333,7 +340,7 @@ end
 function run()
     figdir = "figs2D"
     ar     = 8 # aspect ratio
-    n      = 32
+    n      = 64
     nx     = n*ar - 2
     ny     = n - 2
 

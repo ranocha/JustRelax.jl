@@ -307,6 +307,157 @@ end
     return nothing
 end
 
+
+@inline isplastic(x::AbstractPlasticity) = true
+@inline isplastic(x) = false
+@inline plastic_params(v) = plastic_params(v.CompositeRheology[1].elements)
+
+@generated function plastic_params(v::NTuple{N, Any}) where N
+    quote
+        Base.@_inline_meta
+        Base.@nexprs $N i -> isplastic(v[i]) && return true, v[i].C.val, v[i].sinϕ.val, v[i].η_vp.val
+        (false, 0.0, 0.0, 0.0)
+    end
+end
+
+@parallel_indices (i, j) function compute_τ_new!(
+    τxx,
+    τyy,
+    τxy,
+    TII,
+    τxx_old,
+    τyy_old,
+    τxyv_old,
+    εxx,
+    εyy,
+    εxyv,
+    P,
+    η,
+    η_vep,
+    MatParam,
+    dt,
+    θ_dτ,
+    λ0
+)
+    nx, ny = size(η)
+
+    # convinience closure
+    @inline gather(A) = A[i, j], A[i + 1, j], A[i, j + 1], A[i + 1, j + 1] 
+    @inline av(T)     = (T[i + 1, j] + T[i + 2, j] + T[i + 1, j + 1] + T[i + 2, j + 1]) * 0.25
+    @inline function maxloc(A)
+        max(
+            A[i, j],
+            A[min(i+1, nx), j],
+            A[max(i-1, 1), j],
+            A[i, min(j+1, ny)],
+            A[i, max(j-1, 1),],
+        )
+    end
+
+    @inbounds begin
+        _Gdt        = inv(get_G(MatParam[1]) * dt)
+        ηij         = η[i, j]
+        dτ_r        = 1.0 / (θ_dτ + ηij * _Gdt + 1.0) # original
+        # cache tensors
+        εij_p       = εxx[i, j], εyy[i, j], gather(εxyv)
+        τij_p_o     = τxx_old[i,j], τyy_old[i,j], gather(τxyv_old) 
+        τij         = τxx[i,j], τyy[i,j], τxy[i, j]
+
+        εxy_p       = 0.25 * sum(εij_p[3])
+        τxy_p_o     = 0.25 * sum(τij_p_o[3])
+
+        # Stress increment
+        dτxx      = dτ_r * (-(τij[1] - τij_p_o[1]) * ηij * _Gdt - τij[1] + 2.0 * ηij * (εij_p[1]) ) # NOTE: from GP Tij = 2*η_vep * εij
+        dτyy      = dτ_r * (-(τij[2] - τij_p_o[2]) * ηij * _Gdt - τij[2] + 2.0 * ηij * (εij_p[2]) ) 
+        dτxy      = dτ_r * (-(τij[3] - τxy_p_o   ) * ηij * _Gdt - τij[3] + 2.0 * ηij * (εxy_p   ) ) 
+        τII_trial = sqrt(0.5*((τij[1]+dτxx)^2 + (τij[2]+dτyy)^2) + (τij[3]+dτxy)^2)
+        if τII_trial != 0.0
+            # yield function
+            is_pl, C, sinϕ, η_reg = plastic_params(MatParam[1])
+            F            = τII_trial - C - P[i,j]*sinϕ
+            # a =  F / (η[i, j] * dτ_r + η_reg)
+            λ = λ0[i,j]  = 0.8 * λ0[i,j] + 0.2 * (F>0.0) * F /(η[i, j] * 1 + η_reg) * is_pl
+            λdQdτxx      = 0.5 * (τij[1] + dτxx) / τII_trial * λ
+            λdQdτyy      = 0.5 * (τij[2] + dτyy) / τII_trial * λ
+            λdQdτxy      =       (τij[3] + dτxy) / τII_trial * λ
+           
+            # corrected stress
+            dτxx_pl  = dτ_r * (-(τij[1] - τij_p_o[1]) * ηij * _Gdt - τij[1] + 2.0 * ηij * (εij_p[1] - λdQdτxx    )) # NOTE: from GP Tij = 2*η_vep * εij
+            dτyy_pl  = dτ_r * (-(τij[2] - τij_p_o[2]) * ηij * _Gdt - τij[2] + 2.0 * ηij * (εij_p[2] - λdQdτyy    )) 
+            dτxy_pl  = dτ_r * (-(τij[3] - τxy_p_o)    * ηij * _Gdt - τij[3] + 2.0 * ηij * (εxy_p    - λdQdτxy*0.5)) 
+            τxx[i,j] += dτxx_pl
+            τyy[i,j] += dτyy_pl
+            τxy[i,j] += dτxy_pl
+
+            #  # visco-elastic strain rates
+            # εxx_ve      = εij_p[1] + 0.5 * τij_p_o[1] * _Gdt
+            # εyy_ve      = εij_p[2] + 0.5 * τij_p_o[2] * _Gdt
+            # εxy_ve      = εxy_p    + 0.5 * τxy_p_o    * _Gdt
+            # εII_ve      = sqrt(0.5*(εxx_ve^2 + εyy_ve^2) + εxy_ve^2)
+            # a = TII[i,j]    = sqrt(0.5*(τxx[i,j]^2 + τyy[i,j]^2) + τxy[i,j]^2)
+            
+            # nu = a / 2.0 / εII_ve
+
+            # # if F > 0
+            # #     # CUDA.@printf("%1.3e, %1.3e, %1.3e, %1.3e, %1.3e",λdQdτxx, λdQdτxx, λdQdτxx, dτxx, dτxx_pl)
+            # #     CUDA.@cushow log10(η[i,j]), log10(η_vep[i,j]), log10(nu), dτxx, dτxx_pl
+            # # end
+        else
+            τxx[i,j]   += dτxx
+            τyy[i,j]   += dτyy
+            τxy[i,j]   += dτxy
+        end
+        
+        # visco-elastic strain rates
+        εxx_ve      = εij_p[1] + 0.5 * τij_p_o[1] * _Gdt
+        εyy_ve      = εij_p[2] + 0.5 * τij_p_o[2] * _Gdt
+        εxy_ve      = εxy_p    + 0.5 * τxy_p_o    * _Gdt
+        εII_ve      = sqrt(0.5*(εxx_ve^2 + εyy_ve^2) + εxy_ve^2)
+        TII[i,j]    = sqrt(0.5*(τxx[i,j]^2 + τyy[i,j]^2) + τxy[i,j]^2)
+
+        η_vep[i,j]  = TII[i,j] / 2.0 / εII_ve
+
+    end
+
+    # nx, ny = size(η)
+
+    # # convinience closure
+    # @inline gather(A) = A[i, j], A[i + 1, j], A[i, j + 1], A[i + 1, j + 1] 
+    # # numerics
+    # # θ_dτ        = lτ*(r+2.0)/(re_mech*vdτ)
+    # Gdt         = get_G(MatParam[1])*dt
+    # dτ_r        = 1.0 / (θ_dτ + η[i, j] * inv(Gdt) + 1 )
+
+    # εxy         = sum(gather(εxyv)) * 0.25
+    # τxy_old     = sum(gather(τxyv_old)) * 0.25
+    # # visco-elastic strain rates
+    # εxx_ve      = εxx[i,j] + 0.5 * τxx_old[i,j] / (Gdt)
+    # εyy_ve      = εyy[i,j] + 0.5 * τyy_old[i,j] / (Gdt)
+    # εxy_ve      = εxy      + 0.5 * τxy_old      / (Gdt)
+    # εII_ve      = sqrt(0.5*(εxx_ve^2 + εyy_ve^2) + εxy_ve^2)
+    # # stress increments
+    # dτxx        = (-(τxx[i,j] - τxx_old[i,j])/(Gdt) - τxx[i,j]/η[i,j] + 2.0*εxx[i,j])*dτ_r
+    # dτyy        = (-(τyy[i,j] - τyy_old[i,j])/(Gdt) - τyy[i,j]/η[i,j] + 2.0*εyy[i,j])*dτ_r
+    # dτxy        = (-(τxy[i,j] - τxy_old     )/(Gdt) - τxy[i,j]/η[i,j] + 2.0*εxy     )*dτ_r
+    # τII         = sqrt(0.5*((τxx[i,j]+dτxx)^2 + (τyy[i,j]+dτyy)^2) + (τxy[i,j]+dτxy)^2)
+    # # yield function
+    # C, sinϕ, η_reg = plastic_params(MatParam[1])
+    # F           = τII - C - P[i,j]*sinϕ
+    # λ           = (F>0.0) * F /(η[i, j] * dτ_r + η_reg)
+    # dQdτxx      = 0.5 * (τxx[i,j] + dτxx)/τII
+    # dQdτyy      = 0.5 * (τyy[i,j] + dτyy)/τII
+    # dQdτxy      =       (τxy[i,j] + dτxy)/τII
+    # τxx[i,j]   += (-(τxx[i,j] - τxx_old[i,j])/(Gdt) - τxx[i,j]/η[i,j] + 2.0*(εxx[i,j] -      0.0*λ*dQdτxx))*dτ_r
+    # τyy[i,j]   += (-(τyy[i,j] - τyy_old[i,j])/(Gdt) - τyy[i,j]/η[i,j] + 2.0*(εyy[i,j] -      0.0*λ*dQdτyy))*dτ_r
+    # τxy[i,j]   += (-(τxy[i,j] - τxy_old)/(Gdt)      - τxy[i,j]/η[i,j] + 2.0*(εxy       - 0.5*0.0*λ*dQdτxy))*dτ_r
+    # TII[i,j]    = sqrt(0.5*(τxx[i,j]^2 + τyy[i,j]^2) + τxy[i,j]^2)
+    # # Fchk  .= τII .- τ_y .- Pr.*sinϕ .- λ.*η_reg
+    # η_vep[i,j]  = TII[i,j] / 2.0 / εII_ve
+
+    
+    return nothing
+end
+
 ## 2D VISCO-ELASTIC STOKES SOLVER 
 
 # viscous solver
@@ -626,9 +777,12 @@ function JustRelax.solve!(
     norm_Ry = Float64[]
     norm_∇V = Float64[]
 
+    λ = @zeros(ni...)
     # solver loop
     wtime0 = 0.0
+    # while iter < 1
     while iter < 2 || (err > ϵ && iter ≤ iterMax)
+
         wtime0 += @elapsed begin
             @parallel compute_∇V!(stokes.∇V, stokes.V.Vx, stokes.V.Vy, _di...)
             @parallel compute_P!(
@@ -644,11 +798,12 @@ function JustRelax.solve!(
             )
 
             # Update buoyancy and viscosity -
-            args_ηv = (; T = thermal.T, P = stokes.P, depth=args_η.depth, dt=Inf)
-            @parallel (@idx ni) compute_viscosity_gp!(η, args_ηv, rheology)
+            # args_ηv = (; T = thermal.T, P = stokes.P, depth=args_η.depth, dt=Inf)
+            # @parallel (@idx ni) compute_viscosity_gp!(η, args_ηv, rheology)
             @parallel (@idx ni) compute_ρg!(ρg[2], rheology[1], (T=thermal.T, P=stokes.P))
-            @parallel maxloc!(ητ, η)
-            
+            # @parallel maxloc!(ητ, η)
+            # η0 = deepcopy(η)
+
             @parallel compute_strain_rate!(
                 stokes.ε.xx,
                 stokes.ε.yy,
@@ -657,7 +812,8 @@ function JustRelax.solve!(
                 @tuple(stokes.V)...,
                 _di...,
             )
-            @parallel (@idx ni) compute_τ_gp!(
+
+            @parallel (@idx ni) compute_τ_new!(
                 stokes.τ.xx,
                 stokes.τ.yy,
                 stokes.τ.xy_c,
@@ -668,14 +824,35 @@ function JustRelax.solve!(
                 stokes.ε.xx,
                 stokes.ε.yy,
                 stokes.ε.xy,
+                stokes.P,
                 η,
                 η_vep,
-                args_η,
-                thermal.T,
                 rheology, # needs to be a tuple
                 dt,
                 θ_dτ,
+                λ
             )
+            # @show η == η0
+            # @parallel (@idx ni) compute_τ_gp!(
+            #     stokes.τ.xx,
+            #     stokes.τ.yy,
+            #     stokes.τ.xy_c,
+            #     stokes.τ.II,
+            #     stokes.τ_o.xx,
+            #     stokes.τ_o.yy,
+            #     stokes.τ_o.xy,
+            #     stokes.ε.xx,
+            #     stokes.ε.yy,
+            #     stokes.ε.xy,
+            #     η,
+            #     η_vep,
+            #     args_η,
+            #     thermal.T,
+            #     rheology, # needs to be a tuple
+            #     dt,
+            #     θ_dτ,
+            # )
+
             @parallel center2vertex!(stokes.τ.xy, stokes.τ.xy_c)
             
             # @parallel maxloc!(ητ, η_vep)
@@ -692,7 +869,6 @@ function JustRelax.solve!(
             )
             # apply boundary conditions boundary conditions
             flow_bcs!(stokes, flow_bcs, di)
-
             # ------------------------------
 
         end
@@ -732,138 +908,159 @@ function JustRelax.solve!(
         end
     end
 
-    ## non linear
+    # # non linear
 
-    println("starting non linear iterations")
-    rheology = tupleize(MatParam.plastic)
-    Kb = get_Kb(MatParam.plastic)
+    # println("starting non linear iterations")
+    # rheology = tupleize(MatParam.plastic)
+    # Kb = get_Kb(MatParam.plastic)
 
-     # errors
-     err = 2 * ϵ
-     iter = 0
-     err_evo1 = Float64[]
-     err_evo2 = Float64[]
-     norm_Rx = Float64[]
-     norm_Ry = Float64[]
-     norm_∇V = Float64[]
+    #  # errors
+    #  err = 2 * ϵ
+    #  iter = 0
+    #  err_evo1 = Float64[]
+    #  err_evo2 = Float64[]
+    #  norm_Rx = Float64[]
+    #  norm_Ry = Float64[]
+    #  norm_∇V = Float64[]
  
-     # solver loop
-     wtime0 = 0.0
-    @show iter, err
+    #  # solver loop
+    #  wtime0 = 0.0
+    # @show iter, err
 
-     while iter < 2 || (err > ϵ && iter ≤ iterMax)
-         wtime0 += @elapsed begin
-             @parallel compute_∇V!(stokes.∇V, stokes.V.Vx, stokes.V.Vy, _di...)
-             @parallel compute_P!(
-                 stokes.P,
-                 P_old,
-                 stokes.R.RP,
-                 stokes.∇V,
-                 η,
-                 Kb,
-                 dt,
-                 r,
-                 θ_dτ,
-             )
+    # #  while iter < 0
+    # while iter < 2 || (err > ϵ && iter ≤ iterMax)
+    #      wtime0 += @elapsed begin
+    #          @parallel compute_∇V!(stokes.∇V, stokes.V.Vx, stokes.V.Vy, _di...)
+    #          @parallel compute_P!(
+    #              stokes.P,
+    #              P_old,
+    #              stokes.R.RP,
+    #              stokes.∇V,
+    #              η,
+    #              Kb,
+    #              dt,
+    #              r,
+    #              θ_dτ,
+    #          )
  
-            # Update buoyancy and viscosity -
-            args_ηv = (; T = thermal.T, P = stokes.P, depth=args_η.depth, dt=Inf)
-            @parallel (@idx ni) compute_viscosity_gp!(η, args_ηv, rheology)
-            @parallel (@idx ni) compute_ρg!(ρg[2], rheology[1], (T=thermal.T, P=stokes.P))
-            @parallel maxloc!(ητ, η)
+    #         # Update buoyancy and viscosity -
+    #         args_ηv = (; T = thermal.T, P = stokes.P, depth=args_η.depth, dt=Inf)
+    #         # @parallel (@idx ni) compute_viscosity_gp!(η, args_ηv, rheology)
+    #         @parallel (@idx ni) compute_ρg!(ρg[2], rheology[1], (T=thermal.T, P=stokes.P))
+    #         # @parallel maxloc!(ητ, η)
              
-             @parallel compute_strain_rate!(
-                 stokes.ε.xx,
-                 stokes.ε.yy,
-                 stokes.ε.xy,
-                 stokes.∇V,
-                 @tuple(stokes.V)...,
-                 _di...,
-             )
-             @parallel (@idx ni) compute_τ_gp!(
-                 stokes.τ.xx,
-                 stokes.τ.yy,
-                 stokes.τ.xy_c,
-                 stokes.τ.II,
-                 stokes.τ_o.xx,
-                 stokes.τ_o.yy,
-                 stokes.τ_o.xy,
-                 stokes.ε.xx,
-                 stokes.ε.yy,
-                 stokes.ε.xy,
-                 η,
-                 η_vep,
-                 args_η,
-                 thermal.T,
-                 rheology, # needs to be a tuple
-                 dt,
-                 θ_dτ,
-             )
-             @parallel center2vertex!(stokes.τ.xy, stokes.τ.xy_c)
+    #          @parallel compute_strain_rate!(
+    #              stokes.ε.xx,
+    #              stokes.ε.yy,
+    #              stokes.ε.xy,
+    #              stokes.∇V,
+    #              @tuple(stokes.V)...,
+    #              _di...,
+    #          )
+    #          @parallel (@idx ni) compute_τ_new!(
+    #             stokes.τ.xx,
+    #             stokes.τ.yy,
+    #             stokes.τ.xy_c,
+    #             stokes.τ.II,
+    #             stokes.τ_o.xx,
+    #             stokes.τ_o.yy,
+    #             stokes.τ_o.xy,
+    #             stokes.ε.xx,
+    #             stokes.ε.yy,
+    #             stokes.ε.xy,
+    #             stokes.P,
+    #             η,
+    #             η_vep,
+    #             rheology, # needs to be a tuple
+    #             dt,
+    #             θ_dτ,
+    #             λ
+    #         )
+          
+    #         # @parallel (@idx ni) compute_τ_gp!(
+    #         #     stokes.τ.xx,
+    #         #     stokes.τ.yy,
+    #         #     stokes.τ.xy_c,
+    #         #     stokes.τ.II,
+    #         #     stokes.τ_o.xx,
+    #         #     stokes.τ_o.yy,
+    #         #     stokes.τ_o.xy,
+    #         #     stokes.ε.xx,
+    #         #     stokes.ε.yy,
+    #         #     stokes.ε.xy,
+    #         #     η,
+    #         #     η_vep,
+    #         #     args_η,
+    #         #     thermal.T,
+    #         #     rheology, # needs to be a tuple
+    #         #     dt,
+    #         #     θ_dτ,
+    #         # )
+    #          @parallel center2vertex!(stokes.τ.xy, stokes.τ.xy_c)
              
-             # @parallel maxloc!(ητ, η_vep)
-             @parallel compute_V!(
-                 @tuple(stokes.V)...,
-                 stokes.P,
-                 stokes.τ.xx,
-                 stokes.τ.yy,
-                 stokes.τ.xy,
-                 ηdτ,
-                 ρg...,
-                 ητ,
-                 _di...,
-             )
-             # apply boundary conditions boundary conditions
-             flow_bcs!(stokes, flow_bcs, di)
+    #          # @parallel maxloc!(ητ, η_vep)
+    #          @parallel compute_V!(
+    #              @tuple(stokes.V)...,
+    #              stokes.P,
+    #              stokes.τ.xx,
+    #              stokes.τ.yy,
+    #              stokes.τ.xy,
+    #              ηdτ,
+    #              ρg...,
+    #              ητ,
+    #              _di...,
+    #          )
+    #          # apply boundary conditions boundary conditions
+    #          flow_bcs!(stokes, flow_bcs, di)
  
-             # ------------------------------
+    #          # ------------------------------
  
-         end
+    #      end
 
-         iter += 1
+    #      iter += 1
 
-         if iter % nout == 0 && iter > 2
-             @parallel (@idx ni) compute_Res!(
-                 stokes.R.Rx,
-                 stokes.R.Ry,
-                 stokes.P,
-                 stokes.τ.xx,
-                 stokes.τ.yy,
-                 stokes.τ.xy,
-                 ρg[1],
-                 ρg[2],
-                 _di...,
-             )
-             errs = ntuple(Val(3)) do i
-                 maximum(x->abs.(x), getfield(stokes.R, i))
-             end
-             err = maximum(errs)
-             push!(norm_Rx, errs[1])
-             push!(norm_Ry, errs[2])
-             push!(norm_∇V, errs[3])
-             push!(err_evo1, err)
-             push!(err_evo2, iter)
-             if (verbose && err > ϵ) || (iter == iterMax)
-                 @printf(
-                     "JODER Total steps = %d, err = %1.3e [norm_Rx=%1.3e, norm_Ry=%1.3e, norm_∇V=%1.3e] \n",
-                     iter,
-                     err,
-                     norm_Rx[end],
-                     norm_Ry[end],
-                     norm_∇V[end]
-                 )
-             end
-         end
-     end
+    #      if iter % nout == 0 && iter > 2
+    #          @parallel (@idx ni) compute_Res!(
+    #              stokes.R.Rx,
+    #              stokes.R.Ry,
+    #              stokes.P,
+    #              stokes.τ.xx,
+    #              stokes.τ.yy,
+    #              stokes.τ.xy,
+    #              ρg[1],
+    #              ρg[2],
+    #              _di...,
+    #          )
+    #          errs = ntuple(Val(3)) do i
+    #              maximum(x->abs.(x), getfield(stokes.R, i))
+    #          end
+    #          err = maximum(errs)
+    #          push!(norm_Rx, errs[1])
+    #          push!(norm_Ry, errs[2])
+    #          push!(norm_∇V, errs[3])
+    #          push!(err_evo1, err)
+    #          push!(err_evo2, iter)
+    #          if (verbose && err > ϵ) || (iter == iterMax)
+    #              @printf(
+    #                  "JODER Total steps = %d, err = %1.3e [norm_Rx=%1.3e, norm_Ry=%1.3e, norm_∇V=%1.3e] \n",
+    #                  iter,
+    #                  err,
+    #                  norm_Rx[end],
+    #                  norm_Ry[end],
+    #                  norm_∇V[end]
+    #              )
+    #          end
+    #      end
+    #  end
 
-    println("Non linear iterations done in $iter iterations")
+    # println("Non linear iterations done in $iter iterations")
 
     if -Inf < dt < Inf 
         update_τ_o!(stokes)
         @parallel (@idx ni) rotate_stress!(@tuple(stokes.V), @tuple(stokes.τ_o), _di, dt)
     end
 
-    return (
+    return λ, (
         iter=iter,
         err_evo1=err_evo1,
         err_evo2=err_evo2,
