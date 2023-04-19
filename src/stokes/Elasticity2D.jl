@@ -800,7 +800,7 @@ function JustRelax.solve!(
             # Update buoyancy and viscosity -
             # args_ηv = (; T = thermal.T, P = stokes.P, depth=args_η.depth, dt=Inf)
             # @parallel (@idx ni) compute_viscosity_gp!(η, args_ηv, rheology)
-            @parallel (@idx ni) compute_ρg!(ρg[2], rheology[1], (T=thermal.T, P=stokes.P))
+            # @parallel (@idx ni) compute_ρg!(ρg[2], rheology[1], (T=thermal.T, P=stokes.P))
             # @parallel maxloc!(ητ, η)
             # η0 = deepcopy(η)
 

@@ -26,7 +26,7 @@ end
     (; η0, Ea, Va, T0, R, cutoff) = a.args
     η = η0 * exp((Ea + P * Va) / (R * T) - Ea / (R * T0))
     # correction = (depth ≤ 660e3) + (2740e3 ≥ depth > 660e3) * 1e1  + (depth > 2740e3) * 1e-2
-    correction = (depth ≤ 660e3) + (2740e3 ≥ depth > 660e3) * 1e1  + (depth > 2700e3) * 1e0
+    correction = (depth ≤ 660e3) + (2740e3 ≥ depth > 660e3) * 1e1  + (depth > 2700e3) * 1e-1
     η = clamp(η * correction, cutoff...)
 end
 
@@ -131,20 +131,21 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
 
     # create rheology struct
     # v_args = (; η0=5e20, Ea=100e3, Va=1.6e-6, T0=1.6e3, R=8.3145, cutoff=(1e16, 1e25))
-    # v_args = (; η0=5e20, Ea=200e3, Va=2.6e-6, T0=1.6e3, R=8.3145, cutoff=(1e16, 1e25))
-    v_args = (; η0=5e20, Ea=370e3, Va=3.65e-6, T0=1.6e3, R=8.3145, cutoff=(1e18, 1e25))
+    v_args = (; η0=5e20, Ea=200e3, Va=2.6e-6, T0=1.6e3, R=8.3145, cutoff=(1e16, 1e25))
+    # v_args = (; η0=5e20, Ea=370e3, Va=3.65e-6, T0=1.6e3, R=8.3145, cutoff=(1e18, 1e25))
     # v_args = (; η0=1.2e21, Ea=35e3, Va=0.0, T0=1.6e3, R=8.3145, cutoff=(1e16, 1e25))
     creep = CustomRheology(custom_εII, custom_τII, v_args)
 
     # Physical properties using GeoParams ----------------
-    η_reg     = 1e12
+    η_reg     = 1e8
     G0        = 80e9    # shear modulus
-    cohesion  = 30e6 * 0
+    cohesion  = 30e6
     friction  = asind(0.01)
     # friction  = 30.0
     pl        = DruckerPrager_regularised(; C = cohesion, ϕ=friction, η_vp=η_reg, Ψ=0.0) # non-regularized plasticity
     # pl        = DruckerPrager(; C = 30e6, ϕ=friction, Ψ=0.0) # non-regularized plasticity
-    el        = SetConstantElasticity(; G=G0, ν=0.5)                             # elastic spring
+    el        = SetConstantElasticity(; G=G0, ν=0.50)                             # elastic spring
+    β         = inv(get_Kb(el))*0
     # creep     = ArrheniusType2(; η0 = 1e22, T0=1600, Ea=100e3, Va=1.0e-6)       # Arrhenius-like (T-dependant) viscosity
     # creep     = LinearViscous(; η = 5e20)       # Arrhenius-like (T-dependant) viscosity
 
@@ -152,11 +153,11 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     rheology = SetMaterialParams(;
         Name              = "Mantle",
         Phase             = 1,
-        Density           = PT_Density(; ρ0=3.5e3, β=0.0, T0=0.0, α = 1.5e-5),
+        Density           = PT_Density(; ρ0=3.5e3, β=β, T0=0.0, α = 1.5e-5),
         HeatCapacity      = ConstantHeatCapacity(; cp=1.2e3),
         Conductivity      = ConstantConductivity(; k=3.0),
         CompositeRheology = CompositeRheology((creep, el)),
-        Elasticity        = SetConstantElasticity(; G=G0, ν=0.5),
+        Elasticity        = el,
         Gravity           = ConstantGravity(; g=-9.81),
     )
    
@@ -167,7 +168,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
         HeatCapacity      = ConstantHeatCapacity(; cp=1.2e3),
         Conductivity      = ConstantConductivity(; k=3.0),
         CompositeRheology = CompositeRheology((creep, el, pl)),
-        Elasticity        = SetConstantElasticity(; G=G0, ν=0.5),
+        Elasticity        = el,
         Gravity           = ConstantGravity(; g=-9.81),
     )
     # heat diffusivity
@@ -194,11 +195,11 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     thermal_bcs!(thermal.T, thermal_bc)
     # Elliptical temperature anomaly 
     δT          = 2.0              # thermal perturbation (in %)
-    random_perturbation!(thermal.T, δT, (lx*1/8, lx*7/8), (-660e3, -2600e3), xvi)
-    # δT          = 10.0              # thermal perturbation (in %)
-    # xc, yc      = 0.5*lx, -0.75*ly  # origin of thermal anomaly
-    # r           = 150e3             # radius of perturbation
-    # elliptical_perturbation!(thermal.T, δT, xc, yc, r, xvi)
+    random_perturbation!(thermal.T, δT, (lx*1/8, lx*7/8), (-2000e3, -2600e3), xvi)
+    δT          = 10.0              # thermal perturbation (in %)
+    xc, yc      = 0.5*lx, -0.75*ly  # origin of thermal anomaly
+    r           = 150e3             # radius of perturbation
+    elliptical_perturbation!(thermal.T, δT, xc, yc, r, xvi)
 
     yv = [y for x in xvi[1], y in xvi[2]]./2890e3
     xv = [x for x in xvi[1], y in xvi[2]]./2890e3
@@ -210,11 +211,14 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     # STOKES ---------------------------------------------
     # Allocate arrays needed for every Stokes problem
     stokes          = StokesArrays(ni, ViscoElastic)
-    pt_stokes       = PTStokesCoeffs(li, di; ϵ=1e-5,  CFL = 1.0 / √2)
+    pt_stokes       = PTStokesCoeffs(li, di; ϵ=1e-4,  CFL = 1.0 / √2)
     # Buoyancy forces
     ρg              = @zeros(ni...), @zeros(ni...)
-    @parallel (@idx ni) compute_ρg!(ρg[2], rheology, (T=thermal.T, P=stokes.P))
-    @parallel init_P!(stokes.P, ρg[2], xci[2])
+    for _ in 1:2
+        @parallel (@idx ni) compute_ρg!(ρg[2], rheology, (T=thermal.T, P=stokes.P))
+        @parallel init_P!(stokes.P, ρg[2], xci[2])
+    end
+
     # Rheology
     η               = @ones(ni...)
     args_ηv         = (; T = thermal.T, P = stokes.P, depth = xci[2], dt = Inf)
@@ -281,7 +285,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
             # (; linear=rheology, plastic=rheology_depth), # do a few initial time-steps without plasticity to improve convergence
             # rheology, # d/o a few initial time-steps without plasticity to improve convergence
             dt,
-            iterMax=150e3,
+            iterMax=250e3,
             nout=1e3,
         );
 
