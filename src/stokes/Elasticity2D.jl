@@ -342,9 +342,9 @@ end
     nx, ny = size(η)
 
     # convinience closure
-    @inline gather(A) = A[i, j], A[i + 1, j], A[i, j + 1], A[i + 1, j + 1] 
-    @inline av(T)     = (T[i + 1, j] + T[i + 2, j] + T[i + 1, j + 1] + T[i + 2, j + 1]) * 0.25
-    @inline function maxloc(A)
+    @inline Base.@propagate_inbounds gather(A) = A[i, j], A[i + 1, j], A[i, j + 1], A[i + 1, j + 1] 
+    @inline Base.@propagate_inbounds av(A)     = (A[i + 1, j] + A[i + 2, j] + A[i + 1, j + 1] + A[i + 2, j + 1]) * 0.25
+    @inline Base.@propagate_inbounds function maxloc(A)
         max(
             A[i, j],
             A[min(i+1, nx), j],
@@ -357,7 +357,7 @@ end
     @inbounds begin
         _Gdt        = inv(get_G(MatParam[1]) * dt)
         ηij         = η[i, j]
-        dτ_r        = 1.0 / (θ_dτ + ηij * _Gdt + 1.0) # original
+        dτ_r        = inv(θ_dτ + ηij * _Gdt + 1.0) # original
         # cache tensors
         εij_p       = εxx[i, j], εyy[i, j], gather(εxyv)
         τij_p_o     = τxx_old[i,j], τyy_old[i,j], gather(τxyv_old) 
@@ -367,93 +367,41 @@ end
         τxy_p_o     = 0.25 * sum(τij_p_o[3])
 
         # Stress increment
-        dτxx      = dτ_r * (-(τij[1] - τij_p_o[1]) * ηij * _Gdt - τij[1] + 2.0 * ηij * (εij_p[1]) ) # NOTE: from GP Tij = 2*η_vep * εij
-        dτyy      = dτ_r * (-(τij[2] - τij_p_o[2]) * ηij * _Gdt - τij[2] + 2.0 * ηij * (εij_p[2]) ) 
-        dτxy      = dτ_r * (-(τij[3] - τxy_p_o   ) * ηij * _Gdt - τij[3] + 2.0 * ηij * (εxy_p   ) ) 
+        dτxx      = dτ_r * (-(τij[1] - τij_p_o[1]) * ηij * _Gdt - τij[1] + 2.0 * ηij * (εij_p[1]))
+        dτyy      = dτ_r * (-(τij[2] - τij_p_o[2]) * ηij * _Gdt - τij[2] + 2.0 * ηij * (εij_p[2])) 
+        dτxy      = dτ_r * (-(τij[3] - τxy_p_o   ) * ηij * _Gdt - τij[3] + 2.0 * ηij * (εxy_p   )) 
         τII_trial = sqrt(0.5*((τij[1]+dτxx)^2 + (τij[2]+dτyy)^2) + (τij[3]+dτxy)^2)
         if τII_trial != 0.0
             # yield function
             is_pl, C, sinϕ, η_reg = plastic_params(MatParam[1])
             F            = τII_trial - C - P[i,j]*sinϕ
-            # a =  F / (η[i, j] * dτ_r + η_reg)
             λ = λ0[i,j]  = 0.8 * λ0[i,j] + 0.2 * (F>0.0) * F /(η[i, j] * 1 + η_reg) * is_pl
             λdQdτxx      = 0.5 * (τij[1] + dτxx) / τII_trial * λ
             λdQdτyy      = 0.5 * (τij[2] + dτyy) / τII_trial * λ
-            λdQdτxy      =       (τij[3] + dτxy) / τII_trial * λ
+            λdQdτxy      = 0.5 * (τij[3] + dτxy) / τII_trial * λ
            
             # corrected stress
-            dτxx_pl  = dτ_r * (-(τij[1] - τij_p_o[1]) * ηij * _Gdt - τij[1] + 2.0 * ηij * (εij_p[1] - λdQdτxx    )) # NOTE: from GP Tij = 2*η_vep * εij
-            dτyy_pl  = dτ_r * (-(τij[2] - τij_p_o[2]) * ηij * _Gdt - τij[2] + 2.0 * ηij * (εij_p[2] - λdQdτyy    )) 
-            dτxy_pl  = dτ_r * (-(τij[3] - τxy_p_o)    * ηij * _Gdt - τij[3] + 2.0 * ηij * (εxy_p    - λdQdτxy*0.5)) 
+            dτxx_pl  = dτ_r * (-(τij[1] - τij_p_o[1]) * ηij * _Gdt - τij[1] + 2.0 * ηij * (εij_p[1] - λdQdτxx))
+            dτyy_pl  = dτ_r * (-(τij[2] - τij_p_o[2]) * ηij * _Gdt - τij[2] + 2.0 * ηij * (εij_p[2] - λdQdτyy)) 
+            dτxy_pl  = dτ_r * (-(τij[3] - τxy_p_o)    * ηij * _Gdt - τij[3] + 2.0 * ηij * (εxy_p    - λdQdτxy)) 
             τxx[i,j] += dτxx_pl
             τyy[i,j] += dτyy_pl
             τxy[i,j] += dτxy_pl
-
-            #  # visco-elastic strain rates
-            # εxx_ve      = εij_p[1] + 0.5 * τij_p_o[1] * _Gdt
-            # εyy_ve      = εij_p[2] + 0.5 * τij_p_o[2] * _Gdt
-            # εxy_ve      = εxy_p    + 0.5 * τxy_p_o    * _Gdt
-            # εII_ve      = sqrt(0.5*(εxx_ve^2 + εyy_ve^2) + εxy_ve^2)
-            # a = TII[i,j]    = sqrt(0.5*(τxx[i,j]^2 + τyy[i,j]^2) + τxy[i,j]^2)
-            
-            # nu = a / 2.0 / εII_ve
-
-            # # if F > 0
-            # #     # CUDA.@printf("%1.3e, %1.3e, %1.3e, %1.3e, %1.3e",λdQdτxx, λdQdτxx, λdQdτxx, dτxx, dτxx_pl)
-            # #     CUDA.@cushow log10(η[i,j]), log10(η_vep[i,j]), log10(nu), dτxx, dτxx_pl
-            # # end
         else
-            τxx[i,j]   += dτxx
-            τyy[i,j]   += dτyy
-            τxy[i,j]   += dτxy
+            τxx[i,j] += dτxx
+            τyy[i,j] += dτyy
+            τxy[i,j] += dτxy
         end
         
         # visco-elastic strain rates
-        εxx_ve      = εij_p[1] + 0.5 * τij_p_o[1] * _Gdt
-        εyy_ve      = εij_p[2] + 0.5 * τij_p_o[2] * _Gdt
-        εxy_ve      = εxy_p    + 0.5 * τxy_p_o    * _Gdt
-        εII_ve      = sqrt(0.5*(εxx_ve^2 + εyy_ve^2) + εxy_ve^2)
-        TII[i,j]    = sqrt(0.5*(τxx[i,j]^2 + τyy[i,j]^2) + τxy[i,j]^2)
-
-        η_vep[i,j]  = TII[i,j] / 2.0 / εII_ve
+        εxx_ve     = εij_p[1] + 0.5 * τij_p_o[1] * _Gdt
+        εyy_ve     = εij_p[2] + 0.5 * τij_p_o[2] * _Gdt
+        εxy_ve     = εxy_p    + 0.5 * τxy_p_o    * _Gdt
+        εII_ve     = sqrt(0.5*(εxx_ve^2 + εyy_ve^2) + εxy_ve^2)
+        TII[i,j]   = sqrt(0.5*(τxx[i,j]^2 + τyy[i,j]^2) + τxy[i,j]^2)
+        η_vep[i,j] = TII[i,j] * 0.5 / εII_ve
 
     end
-
-    # nx, ny = size(η)
-
-    # # convinience closure
-    # @inline gather(A) = A[i, j], A[i + 1, j], A[i, j + 1], A[i + 1, j + 1] 
-    # # numerics
-    # # θ_dτ        = lτ*(r+2.0)/(re_mech*vdτ)
-    # Gdt         = get_G(MatParam[1])*dt
-    # dτ_r        = 1.0 / (θ_dτ + η[i, j] * inv(Gdt) + 1 )
-
-    # εxy         = sum(gather(εxyv)) * 0.25
-    # τxy_old     = sum(gather(τxyv_old)) * 0.25
-    # # visco-elastic strain rates
-    # εxx_ve      = εxx[i,j] + 0.5 * τxx_old[i,j] / (Gdt)
-    # εyy_ve      = εyy[i,j] + 0.5 * τyy_old[i,j] / (Gdt)
-    # εxy_ve      = εxy      + 0.5 * τxy_old      / (Gdt)
-    # εII_ve      = sqrt(0.5*(εxx_ve^2 + εyy_ve^2) + εxy_ve^2)
-    # # stress increments
-    # dτxx        = (-(τxx[i,j] - τxx_old[i,j])/(Gdt) - τxx[i,j]/η[i,j] + 2.0*εxx[i,j])*dτ_r
-    # dτyy        = (-(τyy[i,j] - τyy_old[i,j])/(Gdt) - τyy[i,j]/η[i,j] + 2.0*εyy[i,j])*dτ_r
-    # dτxy        = (-(τxy[i,j] - τxy_old     )/(Gdt) - τxy[i,j]/η[i,j] + 2.0*εxy     )*dτ_r
-    # τII         = sqrt(0.5*((τxx[i,j]+dτxx)^2 + (τyy[i,j]+dτyy)^2) + (τxy[i,j]+dτxy)^2)
-    # # yield function
-    # C, sinϕ, η_reg = plastic_params(MatParam[1])
-    # F           = τII - C - P[i,j]*sinϕ
-    # λ           = (F>0.0) * F /(η[i, j] * dτ_r + η_reg)
-    # dQdτxx      = 0.5 * (τxx[i,j] + dτxx)/τII
-    # dQdτyy      = 0.5 * (τyy[i,j] + dτyy)/τII
-    # dQdτxy      =       (τxy[i,j] + dτxy)/τII
-    # τxx[i,j]   += (-(τxx[i,j] - τxx_old[i,j])/(Gdt) - τxx[i,j]/η[i,j] + 2.0*(εxx[i,j] -      0.0*λ*dQdτxx))*dτ_r
-    # τyy[i,j]   += (-(τyy[i,j] - τyy_old[i,j])/(Gdt) - τyy[i,j]/η[i,j] + 2.0*(εyy[i,j] -      0.0*λ*dQdτyy))*dτ_r
-    # τxy[i,j]   += (-(τxy[i,j] - τxy_old)/(Gdt)      - τxy[i,j]/η[i,j] + 2.0*(εxy       - 0.5*0.0*λ*dQdτxy))*dτ_r
-    # TII[i,j]    = sqrt(0.5*(τxx[i,j]^2 + τyy[i,j]^2) + τxy[i,j]^2)
-    # # Fchk  .= τII .- τ_y .- Pr.*sinϕ .- λ.*η_reg
-    # η_vep[i,j]  = TII[i,j] / 2.0 / εII_ve
-
     
     return nothing
 end
@@ -767,6 +715,8 @@ function JustRelax.solve!(
 
     rheology = tupleize(MatParam.linear)
     Kb = get_Kb(MatParam.linear)
+    # rheology = tupleize(MatParam)
+    # Kb = get_Kb(MatParam)
 
     # errors
     err = 2 * ϵ
@@ -800,7 +750,7 @@ function JustRelax.solve!(
             # Update buoyancy and viscosity -
             # args_ηv = (; T = thermal.T, P = stokes.P, depth=args_η.depth, dt=Inf)
             # @parallel (@idx ni) compute_viscosity_gp!(η, args_ηv, rheology)
-            # @parallel (@idx ni) compute_ρg!(ρg[2], rheology[1], (T=thermal.T, P=stokes.P))
+            @parallel (@idx ni) compute_ρg!(ρg[2], rheology[1], (T=thermal.T, P=stokes.P))
             # @parallel maxloc!(ητ, η)
             # η0 = deepcopy(η)
 

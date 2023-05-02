@@ -22,15 +22,28 @@ end
 ) where {T}
     # unpack
     idx_x, idx_y = idx
-    @inbounds px = p_i[1]
-    @inbounds dx = dxi[1]
+    px, py = p_i
+    dx, dy = dxi
     x_vx, y_vx = xi_vx
-    @inbounds xc = x_vx[idx_x]
-    xv = xc + 0.5 * dx
+    # @inbounds xc = x_vx[idx_x]
+    # @inbounds yc = x_vx[idx_y]
+    # xv = xc + 0.5 * dx
+    # yv = yc + 0.5 * dy
+    # # compute offsets and corrections
+    # offset_x = (px - xv) > 0 ? 0 : 1
+    # offset_y = (py - yv) > 0 ? 0 : 1
+    # # cell indices
+    # idx_x += offset_x
+    # idx_y += offset_y
+    @inbounds xv = x_vx[idx_x] # lower-left cell coordinates
+    @inbounds yv = x_vx[idx_y] # lower-left cell coordinates
     # compute offsets and corrections
-    offset_x = (px - xv) > 0 ? 0 : 1
+    offset_x = (px - xv) > dx ? 1 : 0
+    offset_y = (py - yv) > dy ? 1 : 0
     # cell indices
     idx_x += offset_x
+    idx_y += offset_y
+
     # coordinates of lower-left corner of the cell
     @inbounds xcell = x_vx[idx_x]
     @inbounds ycell = y_vx[idx_y]
@@ -56,8 +69,12 @@ end
     xv = xc + 0.5 * dx
     # compute offsets and corrections
     offset_x = (px - xv) > 0 ? 0 : 1
+    offset_y = (py - yv) > 0 ? 0 : 1
+    offset_z = (pz - zv) > 0 ? 0 : 1
     # cell indices
     idx_x += offset_x
+    idx_y += offset_y
+    idx_z += offset_z
     # coordinates of lower-left corner of the cell
     @inbounds xcell = x_vx[idx_x]
     @inbounds ycell = y_vx[idx_y]
@@ -108,39 +125,39 @@ function advection_RK2!(
     return nothing
 end
 
-function advection_RK2_edges!(
-    particles::Particles,
-    V,
-    grid_vx::NTuple{3,T},
-    grid_vy::NTuple{3,T},
-    grid_vz::NTuple{3,T},
-    dt,
-    α,
-) where {T}
-    # unpack 
-    (; coords, index, max_xcell) = particles
-    px, = coords
-    # compute some basic stuff
-    dxi = compute_dx(grid_vx)
-    grid_lims = (
-        extrema(grid_vx[1]) .+ (dxi[1] * 1e-3, -dxi[1] * 1e-3),
-        extrema(grid_vy[2]) .+ (dxi[2] * 1e-3, -dxi[2] * 1e-3),
-        extrema(grid_vy[3]) .+ (dxi[3] * 1e-3, -dxi[3] * 1e-3),
-    )
-    clamped_limits = clamp_grid_lims(grid_lims, dxi)
-    _, nx, ny, nz = size(px)
-    # Need to transpose grid_vy and Vy to reuse interpolation kernels
-    grid_vi = (
-        grid_vx, (grid_vy[2], grid_vy[1], grid_vy[3]), (grid_vz[3], grid_vz[2], grid_vz[1])
-    )
-    V_transp = (V[1], permutedims(V[2], (2,1,3)), permutedims(V[3],(3,2,1)))
-    # launch parallel advection kernel
-    @parallel (1:nx, 1:ny, 1:nz) advection_RK2_edges!(
-        coords, V_transp, index, grid_vi, clamped_limits, dxi, dt, α
-    )
+# function advection_RK2_edges!(
+#     particles::Particles,
+#     V,
+#     grid_vx::NTuple{3,T},
+#     grid_vy::NTuple{3,T},
+#     grid_vz::NTuple{3,T},
+#     dt,
+#     α,
+# ) where {T}
+#     # unpack 
+#     (; coords, index, max_xcell) = particles
+#     px, = coords
+#     # compute some basic stuff
+#     dxi = compute_dx(grid_vx)
+#     grid_lims = (
+#         extrema(grid_vx[1]) .+ (dxi[1] * 1e-3, -dxi[1] * 1e-3),
+#         extrema(grid_vy[2]) .+ (dxi[2] * 1e-3, -dxi[2] * 1e-3),
+#         extrema(grid_vy[3]) .+ (dxi[3] * 1e-3, -dxi[3] * 1e-3),
+#     )
+#     clamped_limits = clamp_grid_lims(grid_lims, dxi)
+#     _, nx, ny, nz = size(px)
+#     # Need to transpose grid_vy and Vy to reuse interpolation kernels
+#     grid_vi = (
+#         grid_vx, (grid_vy[2], grid_vy[1], grid_vy[3]), (grid_vz[3], grid_vz[2], grid_vz[1])
+#     )
+#     V_transp = (V[1], permutedims(V[2], (2,1,3)), permutedims(V[3],(3,2,1)))
+#     # launch parallel advection kernel
+#     @parallel (1:nx, 1:ny, 1:nz) advection_RK2_edges!(
+#         coords, V_transp, index, grid_vi, clamped_limits, dxi, dt, α
+#     )
 
-    return nothing
-end
+#     return nothing
+# end
 
 @parallel_indices (ipart, icell, jcell) function advection_RK2_edges!(
     p,
@@ -152,7 +169,9 @@ end
     dt,
     α,
 ) where {T,N}
+    
     px, py = p
+
     if icell ≤ size(px, 2) && jcell ≤ size(px, 3) && index[ipart, icell, jcell]
         pᵢ = (px[ipart, icell, jcell], py[ipart, icell, jcell])
         if !any(isnan, pᵢ)
@@ -216,7 +235,7 @@ function _advection_RK2_edges(
 ) where {T,N}
     _α = inv(α)
     ValN = Val(N)
-    # αdt = α * dt
+
     # interpolate velocity to current location
     vp0 = ntuple(ValN) do i
         Base.@_inline_meta
@@ -229,6 +248,15 @@ function _advection_RK2_edges(
         Base.@_inline_meta
         muladd(vp0[i] * α, dt, p0[i])
         # clamp(xtmp, clamped_limits[i][1], clamped_limits[i][2])
+    end
+
+    if p1[1] > 1e10
+        #  CUDA.@cushow p1, vp0, p0, idx
+        CUDA.@cushow vp0
+        # CUDA.@printf(
+        #             "%2.3e, %2.3e, %2.3e, %100000i \n",
+        #             p1, vp0, p0, idx
+        #         )
     end
 
     # interpolate velocity to new location
