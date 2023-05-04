@@ -154,7 +154,8 @@ function elliptical_perturbation!(T, δT, xc, yc, r, xvi)
 
     @parallel_indices (i, j) function _elliptical_perturbation!(T, δT, xc, yc, r, x, y)
         @inbounds if (((x[i]-xc ))^2 + ((y[j] - yc))^2) ≤ r^2
-            T[i, j] *= δT/100 + 1
+            # T[i, j] *= δT/100 + 1
+            T[i, j] += 150.0
         end
         return nothing
     end
@@ -193,7 +194,7 @@ Rayleigh_number(ρ, α, ΔT, κ, η0) = ρ * 9.81 * α * ΔT * 2890e3^3 * inv(κ
 function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
 
     # Physical domain ------------------------------------
-    ly       = 2890e3
+    ly       = 400e3
     lx       = ly * ar
     origin   = 0.0, -ly                         # origin coordinates
     ni       = nx, ny                           # number of cells
@@ -207,14 +208,14 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     creep = CustomRheology(custom_εII, custom_τII, v_args)
 
     # Physical properties using GeoParams ----------------
-    η_reg     = 1e8
+    η_reg     = 1e16
     G0        = 80e9    # shear modulus
-    cohesion  = 30e6*0.0
-    friction  = asind(0.01)
-    # friction  = 30.0
+    cohesion  = 30e6
+    # friction  = asind(0.01)
+    friction  = 30.0
     pl        = DruckerPrager_regularised(; C = cohesion, ϕ=friction, η_vp=η_reg, Ψ=0.0) # non-regularized plasticity
     # pl        = DruckerPrager(; C = 30e6, ϕ=friction, Ψ=0.0) # non-regularized plasticity
-    el        = SetConstantElasticity(; G=G0, ν=0.45)                             # elastic spring
+    el        = SetConstantElasticity(; G=G0, ν=0.5)                             # elastic spring
     β         = inv(get_Kb(el))
     # creep     = ArrheniusType2(; η0 = 1e22, T0=1600, Ea=100e3, Va=1.0e-6)       # Arrhenius-like (T-dependant) viscosity
     # creep     = LinearViscous(; η = 1e22)       # Arrhenius-like (T-dependant) viscosity
@@ -223,9 +224,9 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     rheology = SetMaterialParams(;
         Name              = "Mantle",
         Phase             = 1,
-        Density           = PT_Density(; ρ0=3.1e3, β=β, T0=0.0, α = 1.5e-5),
+        Density           = PT_Density(; ρ0=3.0e3, β=β, T0=0.0, α = 1.5e-5),
         HeatCapacity      = ConstantHeatCapacity(; cp=1.2e3),
-        Conductivity      = ConstantConductivity(; k=3.0),
+        Conductivity      = ConstantConductivity(; k=3.3),
         CompositeRheology = CompositeRheology((creep, el, )),
         Elasticity        = el,
         Gravity           = ConstantGravity(; g=-9.81),
@@ -233,9 +234,9 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     rheology_depth = SetMaterialParams(;
         Name              = "Mantle",
         Phase             = 1,
-        Density           = PT_Density(; ρ0=3.5e3, β=β, T0=0.0, α = 1.5e-5),
+        Density           = PT_Density(; ρ0=3.0e3, β=β, T0=0.0, α = 1.5e-5),
         HeatCapacity      = ConstantHeatCapacity(; cp=1.2e3),
-        Conductivity      = ConstantConductivity(; k=3.0),
+        Conductivity      = ConstantConductivity(; k=3.3),
         CompositeRheology = CompositeRheology((creep, el, pl)),
         Elasticity        = el,
         Gravity           = ConstantGravity(; g=-9.81),
@@ -257,7 +258,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     adiabat     = 0.3 # adiabatic gradient
     Tp          = 1900
     Tm          = Tp + adiabat * 2890
-    Tmin, Tmax  = 300.0, 3.5e3
+    Tmin, Tmax  = 300.0, 4000.0
     # thermal.T  .= 1600.0
     @parallel init_T!(thermal.T, xvi[2], κ, Tm, Tp, Tmin, Tmax)
     thermal_bcs!(thermal.T, thermal_bc)
@@ -268,13 +269,14 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     δT          = 5.0              # thermal perturbation (in %)
     # xc, yc      = 0.5*lx, -0.75*ly  # origin of thermal anomaly
     xc, yc      = 0.5*lx, -400e3  # origin of thermal anomaly
-    r           = 150e3             # radius of perturbation
+    r           = 50e3             # radius of perturbation
     elliptical_perturbation!(thermal.T, δT, xc, yc, r, xvi)
     # yv = [y for x in xvi[1], y in xvi[2]]./2890e3
     # xv = [x for x in xvi[1], y in xvi[2]]./2890e3
     # thermal.T[2:end-1,:] .+= PTArray(@. exp(-(10*(xv-4)^2 + 80*(yv + 0.75)^2)) * 50)
-    @views thermal.T[:, 1]   .= Tmax
     @views thermal.T[:, end] .= Tmin
+    # @views thermal.T[:, 1]   .= Tmax
+    Tmax = maximum(thermal.T)
     # ----------------------------------------------------
 
     # STOKES ---------------------------------------------
@@ -341,11 +343,11 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
 
     # Time loop
     t, it = 0.0, 0
-    nt    = 50
+    nt    = 500
     T_buffer = deepcopy(thermal.T[2:end-1, :])
     local iters
-    while it < nt
-    # while (t/(1e6 * 3600 * 24 *365.25)) < 4.5e3
+    # while it < nt
+    while (t/(1e6 * 3600 * 24 *365.25)) < 100
         # Update buoyancy and viscosity -
         args_ηv = (; T = thermal.T, P = stokes.P, depth = xci[2], dt=Inf)
         @parallel (@idx ni) compute_viscosity_gp!(η, args_ηv, (rheology,))
@@ -364,8 +366,8 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
             η,
             η_vep,
             args_η,
-            # it > 3 ?  (; linear=rheology_depth,) : (; linear=rheology,), # do a few initial time-steps without plasticity to improve convergence
-            (; linear=rheology), # do a few initial time-steps without plasticity to improve convergence
+            it > 3 ?  (; linear=rheology_depth,) : (; linear=rheology,), # do a few initial time-steps without plasticity to improve convergence
+            # (; linear=rheology), # do a few initial time-steps without plasticity to improve convergence
             # rheology_depth, # do a few initial time-steps without plasticity to improve convergence
             # (; linear=rheology, plastic=rheology_depth), # do a few initial time-steps without plasticity to improve convergence
             # rheology, # d/o a few initial time-steps without plasticity to improve convergence
@@ -381,32 +383,32 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
         # ------------------------------
 
         # Thermal solver ---------------
+        # args_T = (; P=stokes.P)
+        # solve!(
+        #     thermal,
+        #     thermal_bc,
+        #     stokes,
+        #     rheology,
+        #     args_T,
+        #     di,
+        #     dt 
+        # )
+        # ------------------------------
+        # Thermal solver ---------------
         args_T = (; P=stokes.P)
         solve!(
             thermal,
             thermal_bc,
-            stokes,
             rheology,
             args_T,
             di,
             dt 
         )
         # ------------------------------
-        # # Thermal solver ---------------
-        # args_T = (; P=stokes.P)
-        # solve!(
-        #     thermal,
-        #     thermal_bc,
-        #     rheology,
-        #     args_T,
-        #     di,
-        #     dt 
-        # )
-        # # ------------------------------
 
         # Advection --------------------
         # interpolate fields from grid vertices to particles
-        @views T_buffer .= thermal.T[2:end-1, :]
+        T_buffer = deepcopy(thermal.T[2:end-1, :])
         grid2particle_xvertex!(pT, xvi, T_buffer, particles.coords)
         # advect particles in space
         V = (stokes.V.Vx, stokes.V.Vy)
@@ -422,7 +424,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
         # gather_temperature_xvertex!(T_buffer, pT, ρCₚp, xvi, particles.coords)
         @views T_buffer[:, 1]        .= Tmax
         @views T_buffer[:, end]      .= Tmin
-        # @views thermal.T[2:end-1, :] .= T_buffer
+        @views thermal.T[2:end-1, :] .= T_buffer
 
         # px = particles.coords[1][particles.index][:]./1e3
         # py = particles.coords[2][particles.index][:]./1e3
@@ -433,7 +435,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
         t += dt
 
         # Plotting ---------------------
-        if it == 1 || rem(it, 1) == 0
+        if it == 1 || rem(it, 5) == 0
             fig = Figure(resolution = (1000, 1000), title = "t = $t")
             ax1 = Axis(fig[1,1], aspect = ar, title = "T [K]  (t=$(t/(1e6 * 3600 * 24 *365.25)) Myrs)")
             ax2 = Axis(fig[2,1], aspect = ar, title = "Vy [m/s]")
@@ -441,8 +443,8 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
             # ax4 = Axis(fig[4,1], aspect = ar, title = "ρ [kg/m3]")
             # ax4 = Axis(fig[4,1], aspect = ar, title = "τII - τy [Mpa]")
             ax4 = Axis(fig[4,1], aspect = ar, title = "log10(η)")
-            # h1 = heatmap!(ax1, xvi[1].*1e-3, xvi[2].*1e-3, Array(thermal.T) , colormap=:batlow)
-            h1 = heatmap!(ax1, xvi[1].*1e-3, xvi[2].*1e-3, Array(T_buffer) , colormap=:batlow)
+            h1 = heatmap!(ax1, xvi[1].*1e-3, xvi[2].*1e-3, Array(thermal.T) , colormap=:batlow)
+            # h1 = heatmap!(ax1, xvi[1].*1e-3, xvi[2].*1e-3, Array(T_buffer) , colormap=:batlow)
             h2 = heatmap!(ax2, xci[1].*1e-3, xvi[2].*1e-3, Array(stokes.V.Vy[2:end-1,:]) , colormap=:batlow)
             h3 = heatmap!(ax3, xci[1].*1e-3, xci[2].*1e-3, Array(stokes.τ.II.*1e-6) , colormap=:batlow) 
             h4 = heatmap!(ax4, xci[1].*1e-3, xci[2].*1e-3, Array(log10.(η_vep)) , colormap=:batlow)
@@ -451,12 +453,12 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
             hidexdecorations!(ax1)
             hidexdecorations!(ax2)
             hidexdecorations!(ax3)
-            Colorbar(fig[1,2], h1, height=100)
-            Colorbar(fig[2,2], h2, height=100)
-            Colorbar(fig[3,2], h3, height=100)
-            Colorbar(fig[4,2], h4, height=100)
-           
+            Colorbar(fig[1,2], h1) #, height=100)
+            Colorbar(fig[2,2], h2) #, height=100)
+            Colorbar(fig[3,2], h3) #, height=100)
+            Colorbar(fig[4,2], h4) #, height=100)
             fig
+
             save( joinpath(figdir, "$(it).png"), fig)
         end
         # ------------------------------
@@ -467,9 +469,9 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
 end
 
 function run()
-    figdir = "figs2D_Eulerian"
-    ar     = 8 # aspect ratio
-    n      = 32
+    figdir = "Plume2D"
+    ar     = 2 # aspect ratio
+    n      = 64
     nx     = n*ar - 2
     ny     = n - 2
 
@@ -477,61 +479,3 @@ function run()
 end
 
 run()
-
-# x = Array(particles.coords[1]./1e3)
-# y = Array(particles.coords[2]./1e3)
-
-# scatter!(xvi[1][144]./1e3, xvi[2][2]./1e3, color=:black)
-
-# scatter!(x[:, 144, 2], y[:, 144, 2])
-# scatter!(x[:, 144, 1], y[:, 144, 1])
-# scatter!(x[:, 143, 2], y[:, 143, 2])
-# scatter!(x[:, 143, 1], y[:, 143, 1])
-
-
-# pT[:, 118, 2]
-# particles.index[:, 118, 2]
-# particles.coords[1][:, 118, 2]
-# particles.coords[2][:, 118, 2]
-
-# pT[:, 118, 1]
-# particles.index[:, 118, 1]
-# particles.coords[1][:, 118, 1]
-# particles.coords[2][:, 118, 1]
-
-# pT[:, 117, 2]
-# particles.index[:, 117, 2]
-
-# pT[:, 117, 1]
-# particles.index[:, 117, 1]
-
-
-# Xv = [x for x in xvi[1], y in xvi[2]][:]./1e3
-# # Yv = [y for x in xvi[1], y in xvi[2]][:]./1e3
-
-# scatter(Xv,Yv)
-# # scatter!(xvi[1][inode]./1e3, xvi[2][jnode]./1e3, color=:black)
-# # scatter!(xvi[1][ivertex]./1e3, xvi[2][jvertex]./1e3, color=:red)
-# # scatter!(p_i./1e3, color=:red)
-# # scatter!(Array(p[1][:, ivertex, jvertex])./1e3, Array(p[2][:, ivertex, jvertex])./1e3)
-# # scatter!(Array(p[1][:, ivertex+1, jvertex])./1e3, Array(p[2][:, ivertex+1, jvertex])./1e3)
-
-# # scatter(Xv,Yv)
-# # scatter!(xvi[1][20]./1e3, xvi[2][20]./1e3, color=:black)
-# # scatter!(Array(p[1][:, 20, 20])./1e3, Array(p[2][:, 20, 20])./1e3)
-
-
-# xVx = Array([x for x in grid_vx[1], y in grid_vx[2]])
-# xVy = Array([y for x in grid_vx[1], y in grid_vx[2]])
-# yVx = Array([x for x in grid_vy[1], y in grid_vy[2]])
-# yVy = Array([y for x in grid_vy[1], y in grid_vy[2]])
-
-# p0 = (
-#     particles.coords[1][1, 1, 1],
-#     particles.coords[2][1, 1, 1] 
-# )
-# idx = 1,1
-
-# scatter(xVx[:], xVy[:])
-# scatter!(xv, yv)
-# scatter!(p0)

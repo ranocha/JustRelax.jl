@@ -1,3 +1,5 @@
+ENV["PS_PACKAGE"] = "CUDA"
+
 using JustRelax
 
 # needs this branch of GeoParams , uncomment line below to install it
@@ -8,6 +10,69 @@ model = PS_Setup(:gpu, Float64, 2)
 environment!(model)
 
 using Printf, LinearAlgebra, GeoParams, GLMakie, SpecialFunctions
+
+# PARTICLES #################################################
+using MuladdMacro
+using ParallelStencil.FiniteDifferences2D
+
+using StencilInterpolations
+
+include("src/particles/particles.jl")
+include("src/particles/utils.jl")
+include("src/particles/advection.jl")
+include("src/particles/injection.jl")
+include("src/particles/shuffle_vertex.jl")
+include("src/particles/staggered/centered.jl")
+include("src/particles/staggered/velocity.jl")
+include("src/particles/data.jl")
+
+function twoxtwo_particles2D(nxcell, max_xcell, min_xcell, x, y, dx, dy, nx, ny)
+    ncells = nx * ny
+    np = max_xcell * ncells
+    dx_2 = dx * 0.5
+    dy_2 = dy * 0.5
+    px, py = ntuple(_ -> fill(NaN, max_xcell, nx, ny), Val(2))
+    # min_xcell = ceil(Int, nxcell / 2)
+    # min_xcell = 4
+
+    # index = zeros(UInt32, np)
+    inject = falses(nx, ny)
+    index = falses(max_xcell, nx, ny)
+    @inbounds for j in 1:ny, i in 1:nx
+        # center of the cell
+        x0, y0 = x[i], y[j]
+        # fill index array
+        for l in 1:nxcell
+            px[l, i, j] = x0 + dx_2 * (1.0 + 0.8 * (rand() - 0.5))
+            py[l, i, j] = y0 + dy_2 * (1.0 + 0.8 * (rand() - 0.5))
+            index[l, i, j] = true
+        end
+    end
+
+    if ENV["PS_PACKAGE"] === "CUDA"
+        pxi = CuArray.((px, py))
+        return Particles(
+            pxi, CuArray(index), CuArray(inject), nxcell, max_xcell, min_xcell, np, (nx, ny)
+        )
+
+    else
+        return Particles(
+            (px, py), index, inject, nxcell, max_xcell, min_xcell, np, (nx, ny)
+        )
+    end
+end
+
+function velocity_grids(xci, xvi, di)
+    dx, dy = di
+    yVx = [xci[2][1] - dx; collect(xci[2]); xci[2][end] + dx]
+    xVy = [xci[1][1] - dy; collect(xci[1]); xci[1][end] + dy]
+
+    grid_vx = (CuArray(collect(xvi[1])), CuArray(yVx))
+    grid_vy = (CuArray(xVy), CuArray(collect(xvi[2])))
+
+    return grid_vx, grid_vy
+end
+#############################################################
 
 # function to compute strain rate (compulsory)
 @inline function custom_εII(a::CustomRheology, TauII; args...)
@@ -147,7 +212,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     el        = SetConstantElasticity(; G=G0, ν=0.45)                             # elastic spring
     β         = inv(get_Kb(el))
     # creep     = ArrheniusType2(; η0 = 1e22, T0=1600, Ea=100e3, Va=1.0e-6)       # Arrhenius-like (T-dependant) viscosity
-    creep     = LinearViscous(; η = 1e22)       # Arrhenius-like (T-dependant) viscosity
+    # creep     = LinearViscous(; η = 1e22)       # Arrhenius-like (T-dependant) viscosity
 
     # Define rheolgy struct
     # rheology = SetMaterialParams(;
@@ -254,6 +319,21 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     )
     # ----------------------------------------------------
 
+    # Initialize particles -------------------------------
+    nxcell, max_xcell, min_xcell = 8, 10, 3
+    particles = twoxtwo_particles2D(
+        nxcell, max_xcell, min_xcell, xvi[1], xvi[2], di[1], di[2], nx, ny
+    )
+    # velocity grids
+    grid_vx, grid_vy = velocity_grids(xci, xvi, di)
+    # temperature
+    pT = similar(particles.coords[1])
+    ρCₚp = similar(pT)
+    ρCp = @fill(ρg[2][1]/9.81*1200, ni.+1...)
+    grid2particle_xvertex!(ρCₚp, xvi, ρCp, particles.coords) 
+    particle_args = (pT, ρCₚp)
+    # ----------------------------------------------------
+
     # IO ----- -------------------------------------------
     # if it does not exist, make folder where figures are stored
     !isdir(figdir) && mkpath(figdir)
@@ -279,6 +359,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     t, it = 0.0, 0
     nt    = 20
     local iters
+    T_buffer = deepcopy(thermal.T[2:end-1, :])
     while it < nt
     # while (t/(1e6 * 3600 * 24 *365.25)) < 4.5e3
         # Update buoyancy and viscosity -
@@ -327,12 +408,42 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
             dt 
         )
         # ------------------------------
+        # # Thermal solver ---------------
+        # args_T = (; P=stokes.P)
+        # solve!(
+        #     thermal,
+        #     thermal_bc,
+        #     rheology,
+        #     args_T,
+        #     di,
+        #     dt 
+        # )
+        # # ------------------------------
+
+        # Advection --------------------
+        # interpolate fields from grid vertices to particles
+        @views T_buffer .= thermal.T[2:end-1, :]
+        grid2particle_xvertex!(pT, xvi, T_buffer, particles.coords)
+        # advect particles in space
+        V = (stokes.V.Vx, stokes.V.Vy)
+        advection_RK2!(particles, V, grid_vx, grid_vy, dt, 2 / 3)
+        # advect particles in memory
+        shuffle_particles_vertex!(particles, xvi, particle_args)
+        # check if we need to inject particles
+        @show inject = check_injection(particles)
+        inject && inject_particles!(particles, particle_args, (thermal.T,), xvi)
+        # interpolate fields from particle to grid vertices
+        gathering_xvertex!(T_buffer, pT, xvi, particles.coords)
+        # gather_temperature_xvertex!(T_buffer, pT, ρCₚp, xvi, particles.coords)
+        @views T_buffer[:, 1]       .= Tmax
+        @views T_buffer[:, end]     .= Tmin
+        # @views thermal.T[2:end-1, :] .= T_buffer
 
         @show it += 1
         t += dt
 
         # Plotting ---------------------
-        if it == 1 || rem(it, 50) == 0
+        if it == 1 || rem(it, 1) == 0
             fig = Figure(resolution = (1000, 1000), title = "t = $t")
             ax1 = Axis(fig[1,1], aspect = ar, title = "T [K]  (t=$(t/(1e6 * 3600 * 24 *365.25)) Myrs)")
             ax2 = Axis(fig[2,1], aspect = ar, title = "Vy [m/s]")
@@ -375,4 +486,4 @@ function run()
     thermal_convection2D(; figdir=figdir, ar=ar,nx=nx, ny=ny);
 end
 
-# @time run()
+run()

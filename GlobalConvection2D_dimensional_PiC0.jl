@@ -6,6 +6,7 @@ using JustRelax
 # setup ParallelStencil.jl environment
 model = PS_Setup(:gpu, Float64, 2)
 environment!(model)
+ENV["PS_PACKAGE"] = "CUDA"
 
 using Printf, LinearAlgebra, GeoParams, GLMakie, SpecialFunctions
 
@@ -83,10 +84,13 @@ function velocity_grids(xci, xvi, di)
     # grid_vy = (xvy, xvi[2])
 
     # yVx = (xci[2][1] - dx):dx:(xci[2][end] + dx)
-    yVx = LinRange(xci[2][1] - dx, xci[2][end] + dx, length(xci[2])+2)
-    xVy = LinRange(xci[1][1] - dy, xci[1][end] + dy, length(xci[1])+2)
-    grid_vx = (xvi[1], yVx)
-    grid_vy = (xVy, xvi[2])
+    # yVx = LinRange(xci[2][1] - dx, xci[2][end] + dx, length(xci[2])+2)
+    # xVy = LinRange(xci[1][1] - dy, xci[1][end] + dy, length(xci[1])+2)
+    yVx = [xci[2][1] - dx; collect(xci[2]); xci[2][end] + dx]
+    xVy = [xci[1][1] - dy; collect(xci[1]); xci[1][end] + dy]
+
+    grid_vx = (CuArray(collect(xvi[1])), CuArray(yVx))
+    grid_vy = (CuArray(xVy), CuArray(collect(xvi[2])))
 
     return grid_vx, grid_vy
 end
@@ -210,6 +214,10 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     li       = lx, ly                           # domain length in x- and y-
     di       = @. li / ni                       # grid step in x- and -y
     xci, xvi = lazy_grid(di, li, ni; origin=origin) # nodes at the center and vertices of the cells
+    di =(
+        abs(xci[1][2] - xci[1][1]),
+        abs(xci[2][1] - xci[1][1])
+    )
     # ----------------------------------------------------
 
     # create rheology struct
@@ -222,7 +230,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     # Physical properties using GeoParams ----------------
     η_reg     = 1e8
     G0        = 80e9    # shear modulus
-    cohesion  = 30e6*0.0
+    cohesion  = 20e6
     friction  = asind(0.01)
     # friction  = 30.0
     pl        = DruckerPrager_regularised(; C = cohesion, ϕ=friction, η_vp=η_reg, Ψ=0.0) # non-regularized plasticity
@@ -230,19 +238,9 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     el        = SetConstantElasticity(; G=G0, ν=0.45)                             # elastic spring
     β         = inv(get_Kb(el))
     # creep     = ArrheniusType2(; η0 = 1e22, T0=1600, Ea=100e3, Va=1.0e-6)       # Arrhenius-like (T-dependant) viscosity
-    # creep     = LinearViscous(; η = 1e22)       # Arrhenius-like (T-dependant) viscosity
+    # creep     = LinearViscous(; η = 1e21)       # Arrhenius-like (T-dependant) viscosity
 
     # Define rheolgy struct
-    # rheology = SetMaterialParams(;
-    #     Name              = "Mantle",
-    #     Phase             = 1,
-    #     Density           = PT_Density(; ρ0=3.5e3, β=β, T0=0.0, α = 1.5e-5),
-    #     HeatCapacity      = ConstantHeatCapacity(; cp=1.2e3),
-    #     Conductivity      = ConstantConductivity(; k=3.0),
-    #     CompositeRheology = CompositeRheology((creep, el)),
-    #     Elasticity        = el,
-    #     Gravity           = ConstantGravity(; g=-9.81),
-    # )
     rheology = SetMaterialParams(;
         Name              = "Mantle",
         Phase             = 1,
@@ -256,23 +254,13 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     rheology_depth = SetMaterialParams(;
         Name              = "Mantle",
         Phase             = 1,
-        Density           = PT_Density(; ρ0=3.5e3, β=β, T0=0.0, α = 1.5e-5),
+        Density           = PT_Density(; ρ0=3.1e3, β=β, T0=0.0, α = 1.5e-5),
         HeatCapacity      = ConstantHeatCapacity(; cp=1.2e3),
         Conductivity      = ConstantConductivity(; k=3.0),
         CompositeRheology = CompositeRheology((creep, el, pl)),
         Elasticity        = el,
         Gravity           = ConstantGravity(; g=-9.81),
     )
-    # rheology_depth    = SetMaterialParams(;
-    #     Name              = "Mantle",
-    #     Phase             = 1,
-    #     Density           = PT_Density(; ρ0=3.5e3, β=0.0, T0=0.0, α = 1.5e-5),
-    #     HeatCapacity      = ConstantHeatCapacity(; cp=1.2e3),
-    #     Conductivity      = ConstantConductivity(; k=3.0),
-    #     CompositeRheology = CompositeRheology((creep, el, pl)),
-    #     Elasticity        = el,
-    #     Gravity           = ConstantGravity(; g=-9.81),
-    # )
     # heat diffusivity
     κ            = (rheology.Conductivity[1].k / (rheology.HeatCapacity[1].cp * rheology.Density[1].ρ0)).val
     dt = dt_diff = 0.5 * min(di...)^2 / κ / 2.01 # diffusive CFL timestep limiter
@@ -337,8 +325,8 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     )
     # ----------------------------------------------------
 
-     # Initialize particles -------------------------------
-    nxcell, max_xcell, min_xcell = 8, 10, 6
+    # Initialize particles -------------------------------
+    nxcell, max_xcell, min_xcell = 8, 10, 3
     particles = twoxtwo_particles2D(
         nxcell, max_xcell, min_xcell, xvi[1], xvi[2], di[1], di[2], nx, ny
     )
@@ -348,10 +336,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     pT = similar(particles.coords[1])
     ρCₚp = similar(pT)
     ρCp = @fill(ρg[2][1]/9.81*1200, ni.+1...)
-    
-    grid2particle_xvertex!(ρCₚp, xvi, ρCp, particles.coords)
- 
-    # gathering_xvertex!(thermal.T, pT, xvi, particles.coords)
+    grid2particle_xvertex!(ρCₚp, xvi, ρCp, particles.coords) 
     particle_args = (pT, ρCₚp)
     # ----------------------------------------------------
     
@@ -378,10 +363,12 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
 
     # Time loop
     t, it = 0.0, 0
-    nt    = 2_000
+    nt    = 50
     local iters
+    T_buffer = deepcopy(thermal.T[2:end-1, :])
     # while it < nt
     while (t/(1e6 * 3600 * 24 *365.25)) < 4.5e3
+       
         # Update buoyancy and viscosity -
         args_ηv = (; T = thermal.T, P = stokes.P, depth = xci[2], dt=Inf)
         @parallel (@idx ni) compute_viscosity_gp!(η, args_ηv, (rheology,))
@@ -400,10 +387,10 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
             η,
             η_vep,
             args_η,
-            # it > 3 ?  (; linear=rheology_depth,) : (; linear=rheology,), # do a few initial time-steps without plasticity to improve convergence
+            it > 3 ?  (; linear=rheology_depth,) : (; linear=rheology,), # do a few initial time-steps without plasticity to improve convergence
             # (; linear=rheology, plastic=rheology), # do a few initial time-steps without plasticity to improve convergence
-            (; linear=rheology_depth, ), # do a few initial time-steps without plasticity to improve convergence
-            # (; linear=rheology, plastic=rheology_depth), # do a few initial time-steps without plasticity to improve convergence
+            # rheology_depth, # do a few initial time-steps without plasticity to improve convergence
+            # (; linear=rheology), # do a few initial time-steps without plasticity to improve convergence
             # rheology, # d/o a few initial time-steps without plasticity to improve convergence
             dt,
             iterMax=250e3,
@@ -413,7 +400,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
         @show sum(λ)
 
         println("starting non linear iterations")
-        dt = compute_dt(stokes, di, dt_diff) * 1
+        dt = compute_dt(stokes, di, dt_diff) * 0.95
         # ------------------------------
 
         # Thermal solver ---------------
@@ -429,10 +416,22 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
         )
         # ------------------------------
 
+        # # Thermal solver ---------------
+        # args_T = (; P=stokes.P)
+        # solve!(
+        #    thermal,
+        #    thermal_bc,
+        #    rheology,
+        #    args_T,
+        #    di,
+        #    dt 
+        # )
+        # # ------------------------------
+
         # Advection --------------------
         # interpolate fields from grid vertices to particles
-        grid2particle_xvertex!(pT, xvi, thermal.T, particles.coords)
-        # int2part_vertex!(pT, thermal.T, thermal.Told, particles, xvi)
+        @views T_buffer .= thermal.T[2:end-1, :]
+        grid2particle_xvertex!(pT, xvi, T_buffer, particles.coords)
         # advect particles in space
         V = (stokes.V.Vx, stokes.V.Vy)
         advection_RK2!(particles, V, grid_vx, grid_vy, dt, 2 / 3)
@@ -442,31 +441,41 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
         @show inject = check_injection(particles)
         inject && inject_particles!(particles, particle_args, (thermal.T,), xvi)
         # interpolate fields from particle to grid vertices
-        gathering_xvertex!(thermal.T[2:end-1, :], pT, xvi, particles.coords)
-        # gather_temperature_xvertex!(thermal.T, pT, ρCₚp, xvi, particles.coords)
+        gathering_xvertex!(T_buffer, pT, xvi, particles.coords)
+        # gather_temperature_xvertex!(T_buffer, pT, ρCₚp, xvi, particles.coords)
+        @views T_buffer[:, 1]        .= Tmax
+        @views T_buffer[:, end]      .= Tmin
+        # @views thermal.T[2:end-1, :] .= T_buffer
 
+        # px = Array(particles.coords[1][particles.index][:])./1e3
+        # py = Array(particles.coords[2][particles.index][:])./1e3
+        # T = Array(pT[particles.index][:])
+        # # filter!(x->!isnan(x), px)
+        # # filter!(x->!isnan(x), py)
+        # scatter(px, py, color = T)
+        
         @show it += 1
         t += dt
 
         # Plotting ---------------------
-        if it == 1 || rem(it, 50) == 0
+        if it == 1 || rem(it, 25) == 0
             fig = Figure(resolution = (1000, 1000), title = "t = $t")
             ax1 = Axis(fig[1,1], aspect = ar, title = "T [K]  (t=$(t/(1e6 * 3600 * 24 *365.25)) Myrs)")
             ax2 = Axis(fig[2,1], aspect = ar, title = "Vy [m/s]")
             ax3 = Axis(fig[3,1], aspect = ar, title = "τII [MPa]")
-            # ax4 = Axis(fig[4,1], aspect = ar, title = "ρ [kg/m3]")
+            ax4 = Axis(fig[4,1], aspect = ar, title = "ρ [kg/m3]")
             # ax4 = Axis(fig[4,1], aspect = ar, title = "τII - τy [Mpa]")
-            ax4 = Axis(fig[4,1], aspect = ar, title = "log10(η)")
+            # ax4 = Axis(fig[4,1], aspect = ar, title = "log10(η)")
             h1 = heatmap!(ax1, xvi[1].*1e-3, xvi[2].*1e-3, Array(thermal.T) , colormap=:batlow)
-            h2 = heatmap!(ax2, xci[1].*1e-3, xvi[2].*1e-3, Array(stokes.V.Vy[2:end-1,:]) , colormap=:batlow)
+            h2 = heatmap!(ax2, xvi[1].*1e-3, xvi[2].*1e-3, Array(T_buffer) , colormap=:batlow)
+            # h2 = heatmap!(ax2, xci[1].*1e-3, xvi[2].*1e-3, Array(stokes.V.Vy[2:end-1,:]) , colormap=:batlow)
             h3 = heatmap!(ax3, xci[1].*1e-3, xci[2].*1e-3, Array(stokes.τ.II.*1e-6) , colormap=:batlow) 
-            h4 = heatmap!(ax4, xci[1].*1e-3, xci[2].*1e-3, Array(log10.(η_vep)) , colormap=:batlow)
-            # h4 = heatmap!(ax4, xci[1].*1e-3, xci[2].*1e-3, Array(abs.(ρg[2]./9.81)) , colormap=:batlow)
+            # h4 = heatmap!(ax4, xci[1].*1e-3, xci[2].*1e-3, Array(log10.(η_vep)) , colormap=:batlow)
+            h4 = heatmap!(ax4, xci[1].*1e-3, xci[2].*1e-3, Array(abs.(ρg[2]./9.81)) , colormap=:batlow)
             # h4 = heatmap!(ax4, xci[1].*1e-3, xci[2].*1e-3, Array(@.(stokes.P * friction  + cohesion - stokes.τ.II)/1e6) , colormap=:batlow)
             hidexdecorations!(ax1)
             hidexdecorations!(ax2)
             hidexdecorations!(ax3)
-
             Colorbar(fig[1,2], h1, height=100)
             Colorbar(fig[2,2], h2, height=100)
             Colorbar(fig[3,2], h3, height=100)
@@ -483,7 +492,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
 end
 
 function run()
-    figdir = "figs2D"
+    figdir = "figs2D_PIC"
     ar     = 8 # aspect ratio
     n      = 32
     nx     = n*ar - 2
@@ -492,4 +501,4 @@ function run()
     thermal_convection2D(; figdir=figdir, ar=ar,nx=nx, ny=ny);
 end
 
-# @time run()
+run()
