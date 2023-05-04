@@ -1,6 +1,7 @@
-import .StencilInterpolations: normalize_coordinates, ndlinear
+# import .StencilInterpolations: normalize_coordinates, ndlinear
 
 # INTERPOLATION METHODS
+
 
 function _grid2particle_xcell_edge(
     p_i::NTuple, xi_vx::NTuple, dxi::NTuple, F::AbstractArray, idx
@@ -25,25 +26,16 @@ end
     px, py = p_i
     dx, dy = dxi
     x_vx, y_vx = xi_vx
-    # @inbounds xc = x_vx[idx_x]
-    # @inbounds yc = x_vx[idx_y]
-    # xv = xc + 0.5 * dx
-    # yv = yc + 0.5 * dy
-    # # compute offsets and corrections
+    @inbounds xv = x_vx[idx_x]
+    @inbounds yv = y_vx[idx_y]
+    # compute offsets and corrections
     # offset_x = (px - xv) > 0 ? 0 : 1
     # offset_y = (py - yv) > 0 ? 0 : 1
-    # # cell indices
-    # idx_x += offset_x
-    # idx_y += offset_y
-    @inbounds xv = x_vx[idx_x] # lower-left cell coordinates
-    @inbounds yv = x_vx[idx_y] # lower-left cell coordinates
-    # compute offsets and corrections
-    offset_x = (px - xv) > dx ? 1 : 0
-    offset_y = (py - yv) > dy ? 1 : 0
+    offset_x = vertex_offset(xv, px, dx)
+    offset_y = vertex_offset(yv, py, dy)
     # cell indices
     idx_x += offset_x
     idx_y += offset_y
-
     # coordinates of lower-left corner of the cell
     @inbounds xcell = x_vx[idx_x]
     @inbounds ycell = y_vx[idx_y]
@@ -56,6 +48,16 @@ end
     return Fi, (xcell, ycell)
 end
 
+@inline normalised_distance(xi, pxi, di) = (pxi-xi)/di
+
+@inline function vertex_offset(xi, pxi, di)
+    dist = normalised_distance(xi, pxi, di)
+        dist >  2 && return  2
+    2 > dist >  1 && return  1
+   -1 < dist <  0 && return -1
+        dist < -1 && return -2
+    return 0
+end
 
 @inline function edge_nodes(
     F::AbstractArray{T,3}, p_i, xi_vx, dxi, idx::NTuple{3,Integer}
@@ -115,8 +117,6 @@ function advection_RK2!(
     _, nx, ny = size(px)
     # Need to transpose grid_vy and Vy to reuse interpolation kernels
     grid_vi = grid_vx, grid_vy
-    # grid_vi = (grid_vx, (grid_vy[2], grid_vy[1]))
-    # V_transp = (V[1], V[2]')
     # launch parallel advection kernel
     @parallel (1:max_xcell, 1:nx, 1:ny) advection_RK2_edges!(
         coords, V, index, grid_vi, clamped_limits, dxi, dt, α
@@ -124,40 +124,6 @@ function advection_RK2!(
 
     return nothing
 end
-
-# function advection_RK2_edges!(
-#     particles::Particles,
-#     V,
-#     grid_vx::NTuple{3,T},
-#     grid_vy::NTuple{3,T},
-#     grid_vz::NTuple{3,T},
-#     dt,
-#     α,
-# ) where {T}
-#     # unpack 
-#     (; coords, index, max_xcell) = particles
-#     px, = coords
-#     # compute some basic stuff
-#     dxi = compute_dx(grid_vx)
-#     grid_lims = (
-#         extrema(grid_vx[1]) .+ (dxi[1] * 1e-3, -dxi[1] * 1e-3),
-#         extrema(grid_vy[2]) .+ (dxi[2] * 1e-3, -dxi[2] * 1e-3),
-#         extrema(grid_vy[3]) .+ (dxi[3] * 1e-3, -dxi[3] * 1e-3),
-#     )
-#     clamped_limits = clamp_grid_lims(grid_lims, dxi)
-#     _, nx, ny, nz = size(px)
-#     # Need to transpose grid_vy and Vy to reuse interpolation kernels
-#     grid_vi = (
-#         grid_vx, (grid_vy[2], grid_vy[1], grid_vy[3]), (grid_vz[3], grid_vz[2], grid_vz[1])
-#     )
-#     V_transp = (V[1], permutedims(V[2], (2,1,3)), permutedims(V[3],(3,2,1)))
-#     # launch parallel advection kernel
-#     @parallel (1:nx, 1:ny, 1:nz) advection_RK2_edges!(
-#         coords, V_transp, index, grid_vi, clamped_limits, dxi, dt, α
-#     )
-
-#     return nothing
-# end
 
 @parallel_indices (ipart, icell, jcell) function advection_RK2_edges!(
     p,
@@ -248,15 +214,6 @@ function _advection_RK2_edges(
         Base.@_inline_meta
         muladd(vp0[i] * α, dt, p0[i])
         # clamp(xtmp, clamped_limits[i][1], clamped_limits[i][2])
-    end
-
-    if p1[1] > 1e10
-        #  CUDA.@cushow p1, vp0, p0, idx
-        CUDA.@cushow vp0
-        # CUDA.@printf(
-        #             "%2.3e, %2.3e, %2.3e, %100000i \n",
-        #             p1, vp0, p0, idx
-        #         )
     end
 
     # interpolate velocity to new location

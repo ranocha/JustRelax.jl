@@ -244,8 +244,15 @@ end
     return nothing
 end
 
-@parallel function advect_T!(dT_dt, qTx, qTy, _dx, _dy)
-    @all(dT_dt) = -(@d_xi(qTx) * _dx + @d_yi(qTy) * _dy)
+
+@parallel_indices (i, j) function advect_T!(dT_dt, qTx, qTy, _dx, _dy)
+    if all((i,j).≤ size(dT_dt))        
+        i1, j1 = @add 1 i j # augment indices by 1
+        @inbounds begin    
+            dT_dt[i, j] =
+                -((qTx[i1, j] - qTx[i, j]) * _dx + (qTy[i, j1] - qTy[i, j]) * _dy) 
+        end
+    end
     return nothing
 end
 

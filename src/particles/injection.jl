@@ -188,8 +188,14 @@ function _inject_particles!(
                 index[i, idx_cell...] = true
 
                 for (arg_i, field_i) in zip(args, fields)
+                    local_field = cell_field(field_i, idx_cell...)
+                    upper = maximum(local_field)
+                    lower = minimum(local_field)
                     tmp = _grid2particle_xvertex(p_new, grid, dxi, field_i, idx_cell)
-                    arg_i[i, idx_cell...] = clamp(tmp, extrema(field_i)...)
+                    tmp < lower && (tmp = lower)
+                    tmp > upper && (tmp = upper)
+                    arg_i[i, idx_cell...] = tmp
+                    # arg_i[i, idx_cell...] = clamp(tmp, extrema(field_i)...)
                 end
             end
 
@@ -200,8 +206,12 @@ function _inject_particles!(
     return inject[idx_cell...] = false
 end
 
+cell_field(field, i, j) = field[i, j], field[i+1, j], field[i, j+1], field[i+1, j+1]
+
 function new_particle(xvi::NTuple{N,T}, dxi::NTuple{N,T}) where {N,T}
+    
     f() = rand(-1:2:1) * rand() * 0.25
+
     p_new = ntuple(Val(N)) do i
         # xvi[i] + dxi[i] * 0.5 * (1.0 + f())
         xvi[i] + dxi[i] * rand()
