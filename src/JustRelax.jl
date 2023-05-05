@@ -9,6 +9,8 @@ using CUDA
 using MPI
 using GeoParams
 using HDF5
+using CellArrays
+using StaticArrays
 
 function solve!() end
 
@@ -22,7 +24,9 @@ export PS_Setup, environment!, ps_reset!
 
 include("thermal_diffusion/MetaDiffusion.jl")
 
-include("IO/DataIO.jl")
+# include("phases/phases.jl")
+export Phases, PhaseRatio, nphases, phase_ratios_center
 
+include("IO/DataIO.jl")
 
 end # module

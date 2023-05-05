@@ -1,3 +1,5 @@
+using CellArrays, StaticArrays
+
 struct Phases{T}
     vertex::T
     center::T
@@ -16,23 +18,63 @@ struct PhaseRatio{T}
 end
 
 
-ni = 128,128
-x = @fill(0.0, ni..., celldims=(3, ))
+Base.@propagate_inbounds @inline function Base.setindex!(A::CellArray, x, cell::Int, I::Vararg{Int, N}) where N
 
+    Base.@propagate_inbounds @inline f(A::Array, x, cell, idx) = A[1, cell, idx] = x
+    Base.@propagate_inbounds @inline f(A, x, cell, idx) = A[idx, cell, 1] = x
+    
+    n = A.dims
+    idx = LinearIndices(n)[CartesianIndex(I...)]
+
+    return f(A.data, x, cell, idx)
+end
+
+"""
+    nphases(x::PhaseRatio)
+
+Return the number of phases in `x::PhaseRatio`.
+"""
+@inline nphases(x::PhaseRatio) = nphases(x.center)
 @inline nphases(::CellArray{StaticArraysCore.SArray{Tuple{N}, T, N1, N}, N2, N3, T_Array}) where {N, T, N1, N2, N3, T_Array} = N
 
-@generated function phase_ratios(x)
+"""
+    phase_ratios_center(x::PhaseRatio, cell::Vararg{Int, N})
+
+Compute the phase ratios at the center of the cell `cell` in `x::PhaseRatio`.
+"""
+@inline phase_ratios_center(x::PhaseRatio, phases, cell::Vararg{Int, N}) where N = phase_ratios_center(x.center, phases, cell...)
+
+function phase_ratios_center(x::CellArray, phases, cell::Vararg{Int, N}) where N
+    # total number of material phases
+    num_phases = Val(nphases(x))
+    # number of active particles in this cell
+    _n = 0
+    for j in axes(phases, 1)
+        _n += phases[j, cell...] != 0 
+    end
+    _n = inv(_n)
+    # compute phase ratios
+    ratios = _phase_ratios_center(phases, num_phases, _n, cell...)
+    for (i, ratio) in enumerate(ratios)
+        x[i, cell...] = ratio
+    end
+end
+
+@generated function _phase_ratios_center(phases, ::Val{N1}, _n, cell::Vararg{Int, N2}) where {N1, N2}
     quote
         Base.@_inline_meta
-        phases = 1, 2, 1, 2, 2 
-        num_phases = Val(nphases(x))
-        Base.@nexprs $num_phases i -> reps_i = (
+        Base.@nexprs $N1 i -> reps_i = (
             c = 0;
-            for j in eachindex(phases)
-                c += (phases[j] == i)
+            for j in axes(phases, 1)
+                c += (phases[j, cell...] == i)
             end;
-            c / length(phases)
+            c * _n
         )
-        Base.@ncall $num_phases tuple reps
+        Base.@ncall $N1 tuple reps
     end
+end
+
+@parallel_indices (i, j) function phase_ratios_center(x, phases)
+    phase_ratios_center(x, phases, i, j)
+    return nothing
 end
