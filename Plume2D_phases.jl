@@ -415,7 +415,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
 
         # Advection --------------------
         # interpolate fields from grid vertices to particles
-        T_buffer = deepcopy(thermal.T[2:end-1, :])
+        T_buffer = deepcopy(@view thermal.T[2:end-1, :])
         grid2particle_xvertex!(pT, xvi, T_buffer, particles.coords)
         # advect particles in space
         V = (stokes.V.Vx, stokes.V.Vy)
@@ -484,3 +484,24 @@ function run()
 
     thermal_convection2D(; figdir=figdir, ar=ar,nx=nx, ny=ny);
 end
+
+
+@inline function compute_diffusivity(rheology::MaterialParams, phase_ratios, args)
+    
+    i1, j1 = i + 1, j + 1
+    i2 = i + 2
+    @inline av(T) = 0.25 * (T[i1,j] + T[i2,j] + T[i1,j1] + T[i2,j1]) - 273.0
+
+    ratios       = phase_ratios[i, j]
+    ρ            = compute_density_ratio(ratios, rheology, (; T = av(args.T), P=args.P[i, j])) 
+    conductivity = fn_ratio(compute_conductivity, rheology, args)
+    heatcapacity = fn_ratio(compute_heatcapacity, rheology, args)
+    
+    return conductivity * inv(heatcapacity * ρ)
+end
+
+
+
+
+
+
