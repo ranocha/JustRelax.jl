@@ -49,10 +49,10 @@ using ParallelStencil
 using ParallelStencil.FiniteDifferences2D
 using GeoParams, LinearAlgebra, Printf
 
+using .JustRelax
 import JustRelax: stress, strain, elastic_iter_params!, PTArray, Velocity, SymmetricTensor
 import JustRelax: Residual, StokesArrays, PTStokesCoeffs, AbstractStokesModel, ViscoElastic
 import JustRelax: compute_maxloc!, solve!, @tuple
-
 import ..Stokes2D: compute_P!, compute_V!, compute_strain_rate!
 
 export solve!
@@ -112,6 +112,14 @@ end
     return nothing
 end
 
+## With phase ratios
+@parallel_indices (i, j) function compute_P!(P, P_old, RP, ∇V, η, rheology, phase_ratios, dt, r, θ_dτ)
+    K = fn_ratio(get_Kb, rheology, phase_ratios[i,j])
+    RP[i, j] = -∇V[i, j] - (P[i, j] - P_old[i, j]) / (K * dt)
+    P[i, j] = P[i, j]+ RP[i, j] / (1.0 / (r / θ_dτ * η[i, j]) + 1.0 / (K * dt))
+    return nothing
+end
+
 @parallel function compute_V!(Vx, Vy, P, τxx, τyy, τxyv, ηdτ, ρgx, ρgy, ητ, _dx, _dy)
     @inn(Vx) =
         @inn(Vx) +
@@ -122,13 +130,6 @@ end
         (-@d_ya(P) * _dy + @d_ya(τyy) * _dy + @d_xi(τxyv) * _dx - @av_ya(ρgy)) * ηdτ /
         @harm_ya(ητ)
     return
-end
-
-## Compressible - GeoParams
-@parallel function compute_P!(P, P_old, RP, ∇V, η, K::Number, dt, r, θ_dτ)
-    @all(RP) = -@all(∇V) - (@all(P) - @all(P_old)) / (K * dt)
-    @all(P) = @all(P) + @all(RP) / (1.0 / (r / θ_dτ * @all(η)) + 1.0 / (K * dt))
-    return nothing
 end
 
 @parallel function compute_V!(Vx, Vy, P, τxx, τyy, τxyv, ηdτ, ρgx, ρgy, ητ, _dx, _dy)
@@ -873,6 +874,178 @@ function JustRelax.solve!(
     )
 end
 
+## With phase ratios 
+
+function JustRelax.solve!(
+    stokes::StokesArrays{ViscoElastic,A,B,C,D,2},
+    thermal::ThermalArrays,
+    pt_stokes::PTStokesCoeffs,
+    di::NTuple{2,T},
+    flow_bcs,
+    ρg,
+    η,
+    η_vep,
+    phase_ratios::PhaseRatio,
+    rheology,
+    dt;
+    iterMax=10e3,
+    nout=500,
+    verbose=true,
+) where {A,B,C,D,T}
+
+    # unpack
+    _di = inv.(di)
+    ϵ, r, θ_dτ, ηdτ = pt_stokes.ϵ, pt_stokes.r, pt_stokes.θ_dτ, pt_stokes.ηdτ
+    ni = nx, ny = size(stokes.P)
+    P_old = deepcopy(stokes.P)
+    # z = LinRange(di[2]*0.5, 1.0-di[2]*0.5, ny)
+    # ~preconditioner
+    ητ = deepcopy(η)
+    @parallel maxloc!(ητ, η)
+    # @parallel compute_maxloc!(ητ, η)
+    # apply_free_slip!((freeslip_x=true, freeslip_y=true), ητ, ητ)
+
+    # rheology = tupleize(MatParam.linear)
+    # Kb = get_Kb(MatParam.linear)
+    # rheology = tupleize(MatParam)
+    # Kb = get_Kb(MatParam)
+
+    # errors
+    err = 2 * ϵ
+    iter = 0
+    err_evo1 = Float64[]
+    err_evo2 = Float64[]
+    norm_Rx = Float64[]
+    norm_Ry = Float64[]
+    norm_∇V = Float64[]
+
+    λ = @zeros(ni...)
+    # solver loop
+    wtime0 = 0.0
+    # while iter < 1
+    while iter < 2 || (err > ϵ && iter ≤ iterMax)
+
+        wtime0 += @elapsed begin
+            @parallel compute_∇V!(stokes.∇V, stokes.V.Vx, stokes.V.Vy, _di...)
+            @parallel (@idx ni) compute_P!(
+                stokes.P,
+                P_old,
+                stokes.R.RP,
+                stokes.∇V,
+                η,
+                rheology,
+                phase_ratios.center,
+                dt,
+                r,
+                θ_dτ,
+            )
+
+            # Update buoyancy and viscosity -
+            # args_ηv = (; T = thermal.T, P = stokes.P, depth=args_η.depth, dt=Inf)
+            # @parallel (@idx ni) compute_viscosity_gp!(η, args_ηv, rheology)
+            @parallel (@idx ni) compute_ρg!(ρg[2], phase_ratios.center, rheology, (T=thermal.T, P=stokes.P))
+            # @parallel maxloc!(ητ, η)
+            # η0 = deepcopy(η)
+
+            @parallel compute_strain_rate!(
+                stokes.ε.xx,
+                stokes.ε.yy,
+                stokes.ε.xy,
+                stokes.∇V,
+                @tuple(stokes.V)...,
+                _di...,
+            )
+
+            @parallel (@idx ni) compute_τ_new!(
+                stokes.τ.xx,
+                stokes.τ.yy,
+                stokes.τ.xy_c,
+                stokes.τ.II,
+                stokes.τ_o.xx,
+                stokes.τ_o.yy,
+                stokes.τ_o.xy,
+                stokes.ε.xx,
+                stokes.ε.yy,
+                stokes.ε.xy,
+                stokes.P,
+                η,
+                η_vep,
+                rheology, # needs to be a tuple
+                dt,
+                θ_dτ,
+                λ
+            )
+
+            @parallel center2vertex!(stokes.τ.xy, stokes.τ.xy_c)
+            
+            # @parallel maxloc!(ητ, η_vep)
+            @parallel compute_V!(
+                @tuple(stokes.V)...,
+                stokes.P,
+                stokes.τ.xx,
+                stokes.τ.yy,
+                stokes.τ.xy,
+                ηdτ,
+                ρg...,
+                ητ,
+                _di...,
+            )
+            # apply boundary conditions boundary conditions
+            flow_bcs!(stokes, flow_bcs, di)
+            # ------------------------------
+
+        end
+
+        iter += 1
+        if iter % nout == 0 && iter > 1
+            @parallel (@idx ni) compute_Res!(
+                stokes.R.Rx,
+                stokes.R.Ry,
+                stokes.P,
+                stokes.τ.xx,
+                stokes.τ.yy,
+                stokes.τ.xy,
+                ρg[1],
+                ρg[2],
+                _di...,
+            )
+            errs = ntuple(Val(3)) do i
+                maximum(x->abs.(x), getfield(stokes.R, i))
+            end
+            err = maximum(errs)
+            push!(norm_Rx, errs[1])
+            push!(norm_Ry, errs[2])
+            push!(norm_∇V, errs[3])
+            push!(err_evo1, err)
+            push!(err_evo2, iter)
+            # if (verbose && err > ϵ) || (iter == iterMax)
+                @printf(
+                    "Total steps = %d, err = %1.3e [norm_Rx=%1.3e, norm_Ry=%1.3e, norm_∇V=%1.3e] \n",
+                    iter,
+                    err,
+                    norm_Rx[end],
+                    norm_Ry[end],
+                    norm_∇V[end]
+                )
+            # end
+        end
+    end
+
+    if -Inf < dt < Inf 
+        update_τ_o!(stokes)
+        @parallel (@idx ni) rotate_stress!(@tuple(stokes.V), @tuple(stokes.τ_o), _di, dt)
+    end
+
+    return λ, (
+        iter=iter,
+        err_evo1=err_evo1,
+        err_evo2=err_evo2,
+        norm_Rx=norm_Rx,
+        norm_Ry=norm_Ry,
+        norm_∇V=norm_∇V,
+    )
+end
+
 
 # HELPER FUNCTIONS ---------------------------------------------------------------
 # visco-elasto-plastic with GeoParams
@@ -913,9 +1086,7 @@ end
     ρg[i, j] =
         compute_density_ratio(phase_ratios[i, j], rheology, (; T = av(args.T), P=args.P[i, j])) *
         compute_gravity(rheology[1])
-        
     return nothing
 end
-
 
 end # END OF MODULE

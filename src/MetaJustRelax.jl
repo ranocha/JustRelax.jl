@@ -57,6 +57,9 @@ function environment!(model::PS_Setup{T,N}) where {T,N}
         include(joinpath(@__DIR__, "stokes/Stokes.jl"))
         export stress
 
+        include(joinpath(@__DIR__, "phases/phases.jl"))
+        export PhaseRatio, fn_ratio, phase_ratios_center, setindex!
+
         include(joinpath(@__DIR__, "stokes/Elasticity$(string($N))D.jl"))
 
         include(joinpath(@__DIR__, "thermal_diffusion/DiffusionExplicit.jl"))
@@ -65,6 +68,7 @@ function environment!(model::PS_Setup{T,N}) where {T,N}
 
         include(joinpath(@__DIR__, "Interpolations.jl"))
         export vertex2center!, center2vertex!
+
     end
 
     # conditional submodule load

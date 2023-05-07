@@ -1,4 +1,4 @@
-using CellArrays, StaticArrays
+import Base.setindex!
 
 struct Phases{T}
     vertex::T
@@ -17,8 +17,7 @@ struct PhaseRatio{T}
     end
 end
 
-
-Base.@propagate_inbounds @inline function Base.setindex!(A::CellArray, x, cell::Int, I::Vararg{Int, N}) where N
+Base.@propagate_inbounds @inline function setindex!(A::CellArray, x, cell::Int, I::Vararg{Int, N}) where N
 
     Base.@propagate_inbounds @inline f(A::Array, x, cell, idx) = A[1, cell, idx] = x
     Base.@propagate_inbounds @inline f(A, x, cell, idx) = A[idx, cell, 1] = x
@@ -77,4 +76,27 @@ end
 @parallel_indices (i, j) function phase_ratios_center(x, phases)
     phase_ratios_center(x, phases, i, j)
     return nothing
+end
+
+"""
+    fn_ratio(fn::F, rheology::NTuple{N, AbstractMaterialParamsStruct}, ratio) where {N, F}
+
+Average the function `fn` over the material phases in `rheology` using the phase ratios `ratio`.    
+"""
+@generated function fn_ratio(fn::F, rheology::NTuple{N, AbstractMaterialParamsStruct}, ratio) where {N, F}
+    quote
+        Base.@_inline_meta 
+        x = 0.0
+        Base.@nexprs $N i -> x += ratio[i] == 0 ? 0.0 : fn(rheology[i]) * ratio[i]
+        x * inv($N)
+    end
+end
+
+@generated function fn_ratio(fn::F, rheology::NTuple{N, AbstractMaterialParamsStruct}, ratio, args::NamedTuple) where {N, F}
+    quote
+        Base.@_inline_meta 
+        x = 0.0
+        Base.@nexprs $N i -> x += ratio[i] == 0 ? 0.0 : fn(rheology[i], args) * ratio[i]
+        x * inv($N)
+    end
 end

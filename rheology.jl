@@ -63,23 +63,24 @@ function compute_viscosity_gp!(η, args, rheology)
     return nothing
 end
 
-function compute_viscosity!(η, args, rheology)
-    ε = 1e-15
+function compute_viscosity!(η, args, rheology, ε)
+    phase = rheology[1].Phase
     for i in eachindex(η)
-        args_ij       = (; dt = dt, P = args.P[i], depth = args.depth[i], T=args.T[i], τII_old=0.0)
+        args_ij       = (; dt = args.dt, P = args.P[i], depth = args.depth[i], T=args.T[i], τII_old=0.0)
         εij_p         = ε, ε, (1.0, 1.0, 1.0, 1.0).*ε
         τij_p_o       = 0.0, 0.0, (0.0, 0.0, 0.0, 0.0)
-        phases        = 1, 1, (1,1,1,1) # for now hard-coded for a single phase
+        phases        = phase, phase, phase.*(1,1,1,1) # for now hard-coded for a single phase
         # # update stress and effective viscosity
-        _, _, η[i] = compute_τij(rheology, εij_p, args_ij, τij_p_o, phases)
+        _, _, ηi = compute_τij(rheology, εij_p, args_ij, τij_p_o, phases)
+        η[i] = clamp(ηi, 1e16, 1e25)
     end
     return nothing
 end
 
-function viscosity_profile(rheology)
+function viscosity_profile(rheology; ε=1e-15)
     # allocate arrays
-    n = 2890
-    depth = LinRange(0, 2890e3, n)
+    n = 6600
+    depth = LinRange(0, 660e3, n)
     T, P = zeros(n), zeros(n)
 
     # initialize thermal profile - Half space cooling
@@ -98,10 +99,11 @@ function viscosity_profile(rheology)
 
     η    = zeros(n)
     dt   = 100e3 * 3600 * 24 *365
+    dt   = Inf
     args = (; T=T, P=P, depth=depth, dt=dt)
-    compute_viscosity!(η, args, (rheology,))
+    compute_viscosity!(η, args, (rheology,), ε)
     
-    return η, T
+    return η, T, depth
 end
 
 function init_rheology(creep1, creep2)
@@ -136,17 +138,26 @@ disl = SetDislocationCreep("Dry Olivine | Hirth & Kohlstedt (2003)")
 rheology_cust = init_rheology(custom, custom)
 rheology_dif = init_rheology(dif1, disl)
 
-ηdif , T = viscosity_profile(rheology_dif)
-ηcust, T = viscosity_profile(rheology_cust)
+ηdif , T, depth = viscosity_profile(rheology_dif)
+ηcust, T, depth = viscosity_profile(rheology_cust)
+x=init_rheologies()
+
+η, T, depth = viscosity_profile(x[3]; ε=1e-11)
 
 f = Figure()
 ax1 = Axis(f[1,1]) 
 ax2 = Axis(f[1,2]) 
 lines!(ax1, T, -depth./1e3, color=:black)
-lines!(ax2, log10.(ηdif), -depth./1e3, color=:black)
-lines!(ax2, log10.(ηcust), -depth./1e3, color=:red)
-ax.xlabel = "T (K)"
-ax.ylabel = "deepth (km)"
+for xi in x
+    η, = viscosity_profile(xi; ε=1e-20)
+    lines!(ax2, log10.(η), -depth./1e3, label=join(xi.Name))
+end
+# scatter!(ax2, log10.(η), -depth./1e3, color=:black)
+lines!(ax2, log10.(ηdif), -depth./1e3, color=:red)
+# lines!(ax2, log10.(ηcust), -depth./1e3, color=:red)
+ax1.xlabel = "T (K)"
+ax1.ylabel = "deepth (km)"
+axislegend(ax2, position=:lb)
 f
 
 

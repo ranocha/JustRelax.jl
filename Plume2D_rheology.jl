@@ -1,12 +1,14 @@
 # from "Fingerprinting secondary mantle plumes", Cloetingh et al. 2022
 
 function init_rheologies()
-    disl_upper_crust            = DislocationCreep(A=1e-3   , n=2.0, E=167e3, V=0.0 ,  r=0.0, R=8.3145)
-    disl_lower_crust            = DislocationCreep(A=3.27e-3, n=3.2, E=238e3, V=0.0 ,  r=0.0, R=8.3145)
-    disl_lithospheric_mantle    = DislocationCreep(A=1.1e-5 , n=3.5, E=530e3, V=17.0,  r=0.0, R=8.3145)
-    disl_sublithospheric_mantle = DislocationCreep(A=1.1e-5 , n=3.5, E=530e3, V=20.0,  r=0.0, R=8.3145)
-    diff_lithospheric_mantle    = DiffusionCreep(A=2.46e-5, n=1.0, E=375e3, V=10.0,  r=0.0, R=8.3145)
-    diff_sublithospheric_mantle = DiffusionCreep(A=2.46e-5, n=1.0, E=375e3, V=10.0,  r=0.0, R=8.3145)
+    disl_upper_crust            = DislocationCreep(A=10^-15.0 , n=2.0, E=476e3, V=6e-6  ,  r=0.0, R=8.3145)
+    # disl_upper_crust            = DislocationCreep(A=1.1^-16 , n=2.0, E=476e3, V=0.0,  r=0.0, R=8.3145)
+    # disl_upper_crust            = DislocationCreep(A=10^-15.40 , n=2.0, E=167e3, V=0.0  ,  r=0.0, R=8.3145)
+    disl_lower_crust            = DislocationCreep(A=2.06e-23 , n=3.2, E=238e3, V=0.0  ,  r=0.0, R=8.3145)
+    disl_lithospheric_mantle    = DislocationCreep(A=1.1e-16  , n=3.5, E=530e3, V=17e-6,  r=0.0, R=8.3145)
+    disl_sublithospheric_mantle = DislocationCreep(A=1.1e-16  , n=3.5, E=530e3, V=20e-6,  r=0.0, R=8.3145)
+    diff_lithospheric_mantle    = DiffusionCreep(A=2.46e-16   , n=1.0, E=375e3, V=10e-6,  r=0.0, R=8.3145)
+    diff_sublithospheric_mantle = DiffusionCreep(A=2.46e-16   , n=1.0, E=375e3, V=10e-6,  r=0.0, R=8.3145)
 
     # Physical properties using GeoParams ----------------
     η_reg     = 1e16
@@ -27,7 +29,7 @@ function init_rheologies()
             Density           = PT_Density(; ρ0=2.8e3, β=β, T0=0.0, α = 2.5e-5),
             HeatCapacity      = ConstantHeatCapacity(; cp=7.5e2),
             Conductivity      = ConstantConductivity(; k=2.7),
-            CompositeRheology = CompositeRheology((disl_upper_crust, el, pl)),
+            CompositeRheology = CompositeRheology((disl_upper_crust, )),
             Elasticity        = el,
             Gravity           = ConstantGravity(; g=-9.81),
         ),
@@ -37,7 +39,7 @@ function init_rheologies()
             Density           = PT_Density(; ρ0=2.9e3, β=β, T0=0.0, α = 2.5e-5),
             HeatCapacity      = ConstantHeatCapacity(; cp=7.5e2),
             Conductivity      = ConstantConductivity(; k=2.7),
-            CompositeRheology = CompositeRheology((disl_lower_crust, el, pl)),
+            CompositeRheology = CompositeRheology((disl_lower_crust, )),
             Elasticity        = el,
             Gravity           = ConstantGravity(; g=-9.81),
         ),
@@ -47,7 +49,7 @@ function init_rheologies()
             Density           = PT_Density(; ρ0=3e3, β=β, T0=0.0, α = 3e-5),
             HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
             Conductivity      = ConstantConductivity(; k=3.0),
-            CompositeRheology = CompositeRheology((disl_lithospheric_mantle, diff_lithospheric_mantle, el, )),
+            CompositeRheology = CompositeRheology((disl_lithospheric_mantle, diff_lithospheric_mantle, )),
             Elasticity        = el,
             Gravity           = ConstantGravity(; g=-9.81),
         ),
@@ -57,7 +59,7 @@ function init_rheologies()
             Density           = PT_Density(; ρ0=3e3, β=β, T0=0.0, α = 3e-5),
             HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
             Conductivity      = ConstantConductivity(; k=3.3),
-            CompositeRheology = CompositeRheology((disl_sublithospheric_mantle, diff_sublithospheric_mantle, el, )),
+            CompositeRheology = CompositeRheology((disl_sublithospheric_mantle, diff_sublithospheric_mantle, )),
             Elasticity        = el,
             Gravity           = ConstantGravity(; g=-9.81),
         ),
@@ -67,7 +69,7 @@ function init_rheologies()
             Density           = PT_Density(; ρ0=3e3, β=β, T0=0.0, α = 3e-5),
             HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
             Conductivity      = ConstantConductivity(; k=3.3),
-            CompositeRheology = CompositeRheology((disl_sublithospheric_mantle, diff_sublithospheric_mantle, el, )),
+            CompositeRheology = CompositeRheology((disl_sublithospheric_mantle, diff_sublithospheric_mantle, )),
             Elasticity        = el,
             Gravity           = ConstantGravity(; g=-9.81),
         ),
@@ -77,7 +79,7 @@ function init_rheologies()
             Density           = PT_Density(; ρ0=3e3, β=β, T0=0.0, α = 3e-5),
             HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
             Conductivity      = ConstantConductivity(; k=3.0),
-            CompositeRheology = CompositeRheology((disl_sublithospheric_mantle, diff_sublithospheric_mantle, el, )),
+            CompositeRheology = CompositeRheology((disl_sublithospheric_mantle, diff_sublithospheric_mantle, )),
             Elasticity        = el,
             Gravity           = ConstantGravity(; g=-9.81),
         ),

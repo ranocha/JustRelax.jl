@@ -11,7 +11,6 @@ environment!(model)
 
 using Printf, LinearAlgebra, GeoParams, GLMakie, SpecialFunctions
 
-
 # PARTICLES #################################################
 using MuladdMacro
 using ParallelStencil.FiniteDifferences2D
@@ -36,7 +35,7 @@ include("src/particles/staggered/velocity.jl")
 include("src/particles/data.jl")
 
 include("Plume2D_rheology.jl")
-include("src/phases/phases.jl")
+# include("src/phases/phases.jl")
 
 @inline init_particle_fields(particles) = similar(particles.coords[1]) 
 @inline init_particle_fields(particles, nfields) = tuple([similar(particles.coords[1]) for i in 1:nfields]...)
@@ -122,39 +121,36 @@ end
 
 function compute_τij_ratio(MatParam::NTuple{N,AbstractMaterialParamsStruct}, ratio, εij_p, args_ij, τij_p_o) where N
     data = compute_phase_τij(MatParam, ratio, εij_p, args_ij, τij_p_o)
-    # # average over phases
-    # τij = 0.0, 0.0, 0.0
-    # τII = 0.0
-    # η_eff = 0.0
-    # for n in 1:N
-    #     τij = @. τij + data[n][1] * ratio[n]
-    #     τII += data[n][2] * ratio[n]
-    #     η_eff += data[n][3] * ratio[n]
-    # end
-    # return τij, τII, η_eff
+    # average over phases
+    τij = 0.0, 0.0, 0.0
+    τII = 0.0
+    η_eff = 0.0
+    for n in 1:N
+        τij = @. τij + data[n][1] * ratio[n]
+        τII += data[n][2] * ratio[n]
+        η_eff += data[n][3] * ratio[n]
+    end
+    return τij, τII, η_eff
 end
 
 @parallel_indices (i, j) function compute_viscosity!(η, ratios_center, args, MatParam)
 
     # convinience closure
     @inline av(T)     = (T[i + 1, j] + T[i + 2, j] + T[i + 1, j + 1] + T[i + 2, j + 1]) * 0.25
-    εij_0 = 1.0
+    εij_0 = 1e-20
     @inbounds begin
         ratio_ij      = ratios_center[i,j]
         args_ij       = (; dt = args.dt, P = (args.P[i, j]), depth = abs(args.depth[j]), T=av(args.T), τII_old=0.0)
         # εij_p         = εij_0, εij_0, (εij_0, εij_0, εij_0, εij_0)
-        εij_p         = 1.0, 1.0, (1.0, 1.0, 1.0, 1.0)
+        εij_p         = εij_0, εij_0, εij_0.*(1.0, 1.0, 1.0, 1.0)
         τij_p_o       = 0.0, 0.0, (0.0, 0.0, 0.0, 0.0)
         # # update stress and effective viscosity
-        # _, _, η[i, j] = 
-        compute_τij_ratio(MatParam, ratio_ij, εij_p, args_ij, τij_p_o)
+        _, _, ηi = compute_τij_ratio(MatParam, ratio_ij, εij_p, args_ij, τij_p_o)
+        η[i, j] = clamp(ηi, 1e16, 1e24)
     end
     
     return nothing
 end
-
-@parallel (@idx ni) compute_viscosity!(η, phase_ratios.center, args_ηv, rheology)
-
 
 import ParallelStencil.INDICES
 const idx_j = INDICES[2]
@@ -361,7 +357,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     while (t/(1e6 * 3600 * 24 *365.25)) < 100
         # Update buoyancy and viscosity -
         args_ηv = (; T = thermal.T, P = stokes.P, depth = xci[2], dt=Inf)
-        @parallel (@idx ni) compute_viscosity_gp!(η, args_ηv, (rheology,))
+        @parallel (@idx ni) compute_viscosity!(η, phase_ratios.center, args_ηv, rheology)
         @parallel (@idx ni) compute_ρg!(ρg[2], phase_ratios.center, rheology, (T=thermal.T, P=stokes.P))
         # ------------------------------
  
@@ -376,7 +372,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
             ρg,
             η,
             η_vep,
-            args_η,
+            phase_ratios,
             # it > 3 ?  (; linear=rheology_depth,) : (; linear=rheology,), # do a few initial time-steps without plasticity to improve convergence
             # (; linear=rheology), # do a few initial time-steps without plasticity to improve convergence
             # rheology_depth, # do a few initial time-steps without plasticity to improve convergence
