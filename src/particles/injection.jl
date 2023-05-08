@@ -206,6 +206,109 @@ function _inject_particles!(
     return inject[idx_cell...] = false
 end
 
+
+function inject_particles_phase!(particles::Particles, particles_phases, args, fields, grid::NTuple{2,T}) where {T}
+    # unpack
+    (; inject, coords, index, nxcell) = particles
+    # linear to cartesian object
+    icell, jcell = size(inject)
+    dxi = compute_dx(grid)
+
+    @parallel (1:icell, 1:jcell) inject_particles_phase!(
+        inject, particles_phases, args, fields, coords, index, grid, dxi, nxcell
+    )
+end
+
+@parallel_indices (icell, jcell) function inject_particles_phase!(
+    inject, particles_phases, args, fields, coords, index, grid, dxi::NTuple{2,T}, nxcell
+) where {T}
+    if (icell ≤ size(inject, 1)) && (jcell ≤ size(inject, 2))
+        _inject_particles_phase!(
+            inject, particles_phases, args, fields, coords, index, grid, dxi, nxcell, (icell, jcell)
+        )
+    end
+    return nothing
+end
+
+function _inject_particles_phase!(
+    inject, particles_phases, args, fields, coords, index, grid, dxi, nxcell, idx_cell
+)
+    max_xcell = size(index, 1)
+
+    # closures -----------------------------------
+    first_cell_index(i) = (i - 1) * max_xcell + 1
+    # --------------------------------------------
+
+    @inbounds if inject[idx_cell...]
+        # count current number of particles inside the cell
+        particles_num = false
+        for i in 1:max_xcell
+            particles_num += index[i, idx_cell...]
+        end
+        # CUDA.@cushow particles_num
+
+        # coordinates of the lower-left center
+        xvi = corner_coordinate(grid, idx_cell)
+
+        for i in 1:max_xcell
+            if !(index[i, idx_cell...])
+                particles_num += 1
+
+                # add at cellcenter + small random perturbation
+                p_new = new_particle(xvi, dxi)
+
+                # add phase to new particle
+                idx_min = index_min_distance(coords, p_new, i, idx_cell...)
+                # CUDA.@cushow idx_min, d
+                # CUDA.@cushow idx_cell
+                # CUDA.@cushow particles_phases[i, idx_cell...], particles_phases[idx_min, idx_cell...]
+                particles_phases[i, idx_cell...] = particles_phases[idx_min, idx_cell...]
+
+                fill_particle!(coords, p_new, i, idx_cell)
+                index[i, idx_cell...] = true
+
+                for (arg_i, field_i) in zip(args, fields)
+                    local_field = cell_field(field_i, idx_cell...)
+                    upper = maximum(local_field)
+                    lower = minimum(local_field)
+                    tmp = _grid2particle_xvertex(p_new, grid, dxi, field_i, idx_cell)
+                    tmp < lower && (tmp = lower)
+                    tmp > upper && (tmp = upper)
+                    arg_i[i, idx_cell...] = tmp
+                    # arg_i[i, idx_cell...] = clamp(tmp, extrema(field_i)...)
+                end
+            end
+
+            particles_num == nxcell && break
+        end
+    end
+
+    inject[idx_cell...] = false
+
+    return nothing
+end
+
+@inline distance(x, y) = sqrt((x[1]-y[1])^2 + (x[2]-y[2])^2)
+
+function index_min_distance(coords, pn, current_cell, idx_cell::Vararg{Int, N}) where N
+    # function argsmin_distance(coords, pn, current_cell, idx_cell::Vararg{Int, N}) where N
+    idx_min = 0
+    dist_min = Inf
+    px, py = coords
+    for ip in axes(px, 1)
+        ip==current_cell && continue
+        isnan(px[ip, idx_cell...]) && continue
+        pxi = px[ip, idx_cell...], py[ip, idx_cell...]
+        d = distance(pxi, pn)
+        if d < dist_min
+            idx_min = ip
+            dist_min = d
+        end
+    end
+
+    idx_min
+end
+
 cell_field(field, i, j) = field[i, j], field[i+1, j], field[i, j+1], field[i+1, j+1]
 
 function new_particle(xvi::NTuple{N,T}, dxi::NTuple{N,T}) where {N,T}

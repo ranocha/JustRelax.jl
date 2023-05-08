@@ -940,13 +940,6 @@ function JustRelax.solve!(
                 θ_dτ,
             )
 
-            # Update buoyancy and viscosity -
-            # args_ηv = (; T = thermal.T, P = stokes.P, depth=args_η.depth, dt=Inf)
-            # @parallel (@idx ni) compute_viscosity_gp!(η, args_ηv, rheology)
-            @parallel (@idx ni) compute_ρg!(ρg[2], phase_ratios.center, rheology, (T=thermal.T, P=stokes.P))
-            # @parallel maxloc!(ητ, η)
-            # η0 = deepcopy(η)
-
             @parallel compute_strain_rate!(
                 stokes.ε.xx,
                 stokes.ε.yy,
@@ -955,7 +948,7 @@ function JustRelax.solve!(
                 @tuple(stokes.V)...,
                 _di...,
             )
-
+            
             @parallel (@idx ni) compute_τ_new!(
                 stokes.τ.xx,
                 stokes.τ.yy,
@@ -993,6 +986,14 @@ function JustRelax.solve!(
             # apply boundary conditions boundary conditions
             flow_bcs!(stokes, flow_bcs, di)
             # ------------------------------
+
+            # Update buoyancy and viscosity -
+            args_ηv = (; T = thermal.T, P = stokes.P, dt=Inf)
+            # @parallel (@idx ni) compute_viscosity_gp!(η, args_ηv, rheology)
+            @parallel (@idx ni) compute_viscosity!(η, phase_ratios.center, stokes.ε.xx, stokes.ε.yy, stokes.ε.xy, args_ηv, rheology)
+            @parallel (@idx ni) compute_ρg!(ρg[2], phase_ratios.center, rheology, (T=thermal.T, P=stokes.P))
+            @parallel maxloc!(ητ, η)
+            # η0 = deepcopy(η)
 
         end
 
@@ -1083,10 +1084,54 @@ end
     i2 = i + 2
     @inline av(T) = 0.25 * (T[i1,j] + T[i2,j] + T[i1,j1] + T[i2,j1]) - 273.0
 
-    ρg[i, j] =
-        compute_density_ratio(phase_ratios[i, j], rheology, (; T = av(args.T), P=args.P[i, j])) *
+    ρg[i, j] = -compute_density_ratio(phase_ratios[i, j], rheology, (; T = av(args.T), P=args.P[i, j])) *
         compute_gravity(rheology[1])
     return nothing
+end
+
+@parallel_indices (i, j) function compute_viscosity!(η, ratios_center, εxx, εyy, εxyv, args, MatParam)
+
+    # convinience closure
+    @inline Base.@propagate_inbounds gather(A) = A[i, j], A[i + 1, j], A[i, j + 1], A[i + 1, j + 1] 
+    @inline Base.@propagate_inbounds av(A)     = (A[i + 1, j] + A[i + 2, j] + A[i + 1, j + 1] + A[i + 2, j + 1]) * 0.25
+   
+    εII_0 = (εxx[i, j] == 0 && εyy[i, j] == 0) ? 1e-15 : 0.0
+    ν = 0.05
+    @inbounds begin
+        ratio_ij      = ratios_center[i,j]
+        args_ij       = (; dt = args.dt, P = (args.P[i, j]), T=av(args.T), τII_old=0.0)
+        εij_p         = εII_0 + εxx[i, j], -εII_0 + εyy[i, j], gather(εxyv)
+        τij_p_o       = 0.0, 0.0, (0.0, 0.0, 0.0, 0.0)
+        # # update stress and effective viscosity
+        _, _, ηi = compute_τij_ratio(MatParam, ratio_ij, εij_p, args_ij, τij_p_o)
+        ηi = exp((1-ν)*log(η[i, j]) + ν*log(ηi))
+        η[i, j] = clamp(ηi, 1e16, 1e24)
+    end
+    
+    return nothing
+end
+
+@generated function compute_phase_τij(MatParam::NTuple{N,AbstractMaterialParamsStruct}, ratio, εij_p, args_ij, τij_p_o) where N
+    quote
+        Base.@_inline_meta 
+        empty_args = (0.0, 0.0, 0.0), 0.0, 0.0
+        Base.@nexprs $N i -> a_i = ratio[i] == 0 ? empty_args : compute_τij(MatParam[i].CompositeRheology[1], εij_p, args_ij, τij_p_o) 
+        Base.@ncall $N tuple a
+    end
+end
+
+function compute_τij_ratio(MatParam::NTuple{N,AbstractMaterialParamsStruct}, ratio, εij_p, args_ij, τij_p_o) where N
+    data = compute_phase_τij(MatParam, ratio, εij_p, args_ij, τij_p_o)
+    # average over phases
+    τij = 0.0, 0.0, 0.0
+    τII = 0.0
+    η_eff = 0.0
+    for n in 1:N
+        τij = @. τij + data[n][1] * ratio[n]
+        τII += data[n][2] * ratio[n]
+        η_eff += data[n][3] * ratio[n]
+    end
+    return τij, τII, η_eff
 end
 
 end # END OF MODULE

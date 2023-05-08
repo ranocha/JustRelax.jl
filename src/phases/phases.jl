@@ -49,7 +49,7 @@ function phase_ratios_center(x::CellArray, phases, cell::Vararg{Int, N}) where N
     # number of active particles in this cell
     _n = 0
     for j in axes(phases, 1)
-        _n += phases[j, cell...] != 0 
+        _n += isinteger(phases[j, cell...]) && phases[j, cell...] != 0
     end
     _n = inv(_n)
     # compute phase ratios
