@@ -104,7 +104,7 @@ function init_phases!(phases, particles::Particles, Lx; r=50e3)
                 phases[ip, i, j] = 3
 
                  # weak zone
-                if abs(x - 400e3 ) ≤ r
+                if abs(x -  Lx * 0.5) ≤ r
                     phases[ip, i, j] = 6
                 end
 
