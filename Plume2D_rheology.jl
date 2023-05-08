@@ -2,8 +2,6 @@
 
 function init_rheologies()
     disl_upper_crust            = DislocationCreep(A=10^-15.0 , n=2.0, E=476e3, V=6e-6  ,  r=0.0, R=8.3145)
-    # disl_upper_crust            = DislocationCreep(A=1.1^-16 , n=2.0, E=476e3, V=0.0,  r=0.0, R=8.3145)
-    # disl_upper_crust            = DislocationCreep(A=10^-15.40 , n=2.0, E=167e3, V=0.0  ,  r=0.0, R=8.3145)
     disl_lower_crust            = DislocationCreep(A=2.06e-23 , n=3.2, E=238e3, V=0.0  ,  r=0.0, R=8.3145)
     disl_lithospheric_mantle    = DislocationCreep(A=1.1e-16  , n=3.5, E=530e3, V=17e-6,  r=0.0, R=8.3145)
     disl_sublithospheric_mantle = DislocationCreep(A=1.1e-16  , n=3.5, E=530e3, V=20e-6,  r=0.0, R=8.3145)
@@ -46,9 +44,9 @@ function init_rheologies()
         SetMaterialParams(;
             Name              = "LithosphericMantle",
             Phase             = 3,
-            Density           = PT_Density(; ρ0=3e3, β=β, T0=0.0, α = 3e-5),
+            Density           = PT_Density(; ρ0=3.3e3, β=β, T0=0.0, α = 3e-5),
             HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
-            Conductivity      = ConstantConductivity(; k=3.0),
+            Conductivity      = ConstantConductivity(; k=3.3),
             CompositeRheology = CompositeRheology((disl_lithospheric_mantle, diff_lithospheric_mantle, )),
             Elasticity        = el,
             Gravity           = ConstantGravity(; g=-9.81),
@@ -56,7 +54,7 @@ function init_rheologies()
         SetMaterialParams(;
             Name              = "SubLithosphericMantle",
             Phase             = 4,
-            Density           = PT_Density(; ρ0=3e3, β=β, T0=0.0, α = 3e-5),
+            Density           = PT_Density(; ρ0=3.3e3, β=β, T0=0.0, α = 3e-5),
             HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
             Conductivity      = ConstantConductivity(; k=3.3),
             CompositeRheology = CompositeRheology((disl_sublithospheric_mantle, diff_sublithospheric_mantle, )),
@@ -68,7 +66,7 @@ function init_rheologies()
             Phase             = 5,
             Density           = PT_Density(; ρ0=3e3, β=β, T0=0.0, α = 3e-5),
             HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
-            Conductivity      = ConstantConductivity(; k=3.3),
+            Conductivity      = ConstantConductivity(; k=3.0),
             CompositeRheology = CompositeRheology((disl_sublithospheric_mantle, diff_sublithospheric_mantle, )),
             Elasticity        = el,
             Gravity           = ConstantGravity(; g=-9.81),
@@ -76,7 +74,7 @@ function init_rheologies()
         SetMaterialParams(;
             Name              = "WeakZone",
             Phase             = 6,
-            Density           = PT_Density(; ρ0=3e3, β=β, T0=0.0, α = 3e-5),
+            Density           = PT_Density(; ρ0=3.3e3, β=β, T0=0.0, α = 3e-5),
             HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
             Conductivity      = ConstantConductivity(; k=3.0),
             CompositeRheology = CompositeRheology((disl_sublithospheric_mantle, diff_sublithospheric_mantle, )),
@@ -86,10 +84,10 @@ function init_rheologies()
     )
 end
 
-function init_phases!(phases, particles::Particles; r=50e3)
+function init_phases!(phases, particles::Particles, Lx; r=50e3)
     ni = size(phases, 2), size(phases, 3)
 
-    @parallel_indices (i, j) function init_phases!(phases, px, py, index, r)
+    @parallel_indices (i, j) function init_phases!(phases, px, py, index, r, Lx)
         @inbounds for ip in axes(phases,1)
             # quick escape
             index[ip, i, j] == 0 && continue
@@ -115,12 +113,12 @@ function init_phases!(phases, particles::Particles; r=50e3)
             end
 
             # plume
-            if (((x - 400e3 ))^2 + ((depth - 400e3))^2) ≤ r^2
+            if (((x - Lx * 0.5))^2 + ((depth - 400e3))^2) ≤ r^2
                 phases[ip, i, j] = 5
             end
         end
         return nothing
     end
 
-    @parallel (@idx ni) init_phases!(pPhases, particles.coords[1], particles.coords[2], particles.index, r)
+    @parallel (@idx ni) init_phases!(phases, particles.coords[1], particles.coords[2], particles.index, r, Lx)
 end
