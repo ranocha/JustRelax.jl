@@ -2,7 +2,7 @@
 
 julia_version = "1.8.3"
 manifest_format = "2.0"
-project_hash = "558ddc0ffe4d59ee0753fb97f17356ceda72b811"
+project_hash = "b21ed585e6b8931f8a1ad2e8c0c8a425d5c07102"
 
 [[deps.AMDGPU]]
 deps = ["AbstractFFTs", "Adapt", "BinaryProvider", "CEnum", "ExprTools", "GPUArrays", "GPUCompiler", "HIP_jll", "LLD_jll", "LLVM", "LLVM_jll", "Libdl", "LinearAlgebra", "MacroTools", "MsgPack", "ObjectFile", "Pkg", "Preferences", "Printf", "ROCmDeviceLibs_jll", "Random", "Requires", "Setfield", "SpecialFunctions", "Statistics", "TimespanLogging", "hsa_rocr_jll", "rocBLAS_jll", "rocRAND_jll", "rocSPARSE_jll"]
@@ -92,6 +92,12 @@ version = "0.4.2"
 [[deps.CRC32c]]
 uuid = "8bf52ea8-c179-5cab-976a-9e18b702a9bc"
 
+[[deps.CSTParser]]
+deps = ["Tokenize"]
+git-tree-sha1 = "3ddd48d200eb8ddf9cb3e0189fc059fd49b97c1f"
+uuid = "00ebfdb7-1f24-5e51-bd34-a7502290713f"
+version = "3.3.6"
+
 [[deps.CUDA]]
 deps = ["AbstractFFTs", "Adapt", "BFloat16s", "CEnum", "CompilerSupportLibraries_jll", "ExprTools", "GPUArrays", "GPUCompiler", "LLVM", "LazyArtifacts", "Libdl", "LinearAlgebra", "Logging", "Printf", "Random", "Random123", "RandomNumbers", "Reexport", "Requires", "SparseArrays", "SpecialFunctions", "TimerOutputs"]
 git-tree-sha1 = "6717cb9a3425ebb7b31ca4f832823615d175f64a"
@@ -176,6 +182,12 @@ git-tree-sha1 = "fc08e5930ee9a4e03f84bfb5211cb54e7769758a"
 uuid = "5ae59095-9a9b-59fe-a467-6f913c188581"
 version = "0.12.10"
 
+[[deps.CommonMark]]
+deps = ["Crayons", "JSON", "PrecompileTools", "URIs"]
+git-tree-sha1 = "532c4185d3c9037c0237546d817858b23cf9e071"
+uuid = "a80b9123-70ca-4bc0-993e-6e3bcb318db6"
+version = "0.8.12"
+
 [[deps.CommonSolve]]
 git-tree-sha1 = "9441451ee712d1aec22edad62db1a9af3dc8d852"
 uuid = "38540f10-b2f7-11e9-35d8-d573e4eb0ff2"
@@ -208,6 +220,11 @@ version = "1.5.1"
 git-tree-sha1 = "d05d9e7b7aedff4e5b51a029dced05cfb6125781"
 uuid = "d38c429a-6771-53c6-b99e-75d170b6e991"
 version = "0.6.2"
+
+[[deps.Crayons]]
+git-tree-sha1 = "249fe38abf76d48563e2f4556bebd215aa317e15"
+uuid = "a8cc5b0e-0ffa-5ad4-8c14-923d3ee1735f"
+version = "4.1.1"
 
 [[deps.DataAPI]]
 git-tree-sha1 = "e8119c1a33d267e16108be441a287a6981ba1630"
@@ -469,6 +486,11 @@ git-tree-sha1 = "d3b3624125c1474292d0d8ed0f65554ac37ddb23"
 uuid = "7746bdde-850d-59dc-9ae8-88ece973131d"
 version = "2.74.0+2"
 
+[[deps.Glob]]
+git-tree-sha1 = "97285bbd5230dd766e9ef6749b80fc617126d496"
+uuid = "c27321d9-0574-5035-807b-f59d2c89b15c"
+version = "1.3.1"
+
 [[deps.Graphics]]
 deps = ["Colors", "LinearAlgebra", "NaNMath"]
 git-tree-sha1 = "d61890399bc535850c4bf08e4e0d3a7ad0f21cbd"
@@ -651,6 +673,12 @@ deps = ["Artifacts", "JLLWrappers", "Libdl"]
 git-tree-sha1 = "6f2675ef130a300a112286de91973805fcc5ffbc"
 uuid = "aacddb02-875f-59d6-b918-886e6ef4fbf8"
 version = "2.1.91+0"
+
+[[deps.JuliaFormatter]]
+deps = ["CSTParser", "CommonMark", "DataStructures", "Glob", "Pkg", "PrecompileTools", "Tokenize"]
+git-tree-sha1 = "01ab91fcce19c965b3c68a82eb26260a3a7af271"
+uuid = "98e50ef6-434e-11e9-1051-2b60c6c9e899"
+version = "1.0.29"
 
 [[deps.KernelDensity]]
 deps = ["Distributions", "DocStringExtensions", "FFTW", "Interpolations", "StatsBase"]
@@ -1098,6 +1126,12 @@ git-tree-sha1 = "77b3d3605fc1cd0b42d95eba87dfcd2bf67d5ff6"
 uuid = "647866c9-e3ac-4575-94e7-e3d426903924"
 version = "0.1.2"
 
+[[deps.PrecompileTools]]
+deps = ["Preferences"]
+git-tree-sha1 = "d0984cc886c48e5a165705ce65236dc2ec467b91"
+uuid = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
+version = "1.1.0"
+
 [[deps.Preferences]]
 deps = ["TOML"]
 git-tree-sha1 = "47e5f437cc0e7ef2ce8406ce1e7e24d44915f88d"
@@ -1433,6 +1467,11 @@ git-tree-sha1 = "51be7dd35b0c8a5a613dc7af272d587ea6943d24"
 uuid = "a526e669-04d3-4846-9525-c66122c55f63"
 version = "0.1.0"
 
+[[deps.Tokenize]]
+git-tree-sha1 = "90538bf898832b6ebd900fa40f223e695970e3a5"
+uuid = "0796e94c-ce3b-5d07-9a54-7f471281c624"
+version = "0.5.25"
+
 [[deps.TranscodingStreams]]
 deps = ["Random", "Test"]
 git-tree-sha1 = "94f38103c984f89cf77c402f2a68dbd870f8165f"
@@ -1448,6 +1487,11 @@ version = "0.1.0"
 git-tree-sha1 = "3c712976c47707ff893cf6ba4354aa14db1d8938"
 uuid = "9d95972d-f1c8-5527-a6e0-b4b365fa01f6"
 version = "1.3.0"
+
+[[deps.URIs]]
+git-tree-sha1 = "074f993b0ca030848b897beff716d93aca60f06a"
+uuid = "5c2747f8-b7ea-4ff2-ba2e-563bfd36b1d4"
+version = "1.4.2"
 
 [[deps.UUIDs]]
 deps = ["Random", "SHA"]

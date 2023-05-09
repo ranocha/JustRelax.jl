@@ -745,6 +745,7 @@ function JustRelax.solve!(
     ρg,
     η,
     η_vep,
+    G,
     phase_v,
     phase_c,
     args_η,

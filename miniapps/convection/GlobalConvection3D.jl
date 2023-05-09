@@ -22,8 +22,8 @@ environment!(model)
 end
 
 @parallel_indices (i, j, k) function computeViscosity!(η, v, args)
-    Base.Base.@propagate_inbounds @inline av(T) =
-        0.125 * (
+    Base.Base.@propagate_inbounds @inline function av(T)
+        return 0.125 * (
             T[i, j, k] +
             T[i + 1, j, k] +
             T[i, j + 1, k] +
@@ -33,7 +33,7 @@ end
             T[i, j + 1, k + 1] +
             T[i + 1, j + 1, k + 1]
         )
-    
+    end
 
     @inbounds η[i, j, k] = computeViscosity_εII(v, 1.0, (; T=av(args.T)))
 
@@ -92,7 +92,7 @@ function thermal_convection3D(; ar=8, ny=16, nx=ny * 8, nz=ny * 8, figdir="figs3
     li = lx_nd, ly_nd, lz_nd               # domain length in x-, y-, and z-
     di = @. li / ni                        # grid step in x-, y-,y- and z-
     origin = 0.0, 0.0, 0.0                     # Origin coordinates
-    xci, xvi = lazy_grid(di, li, ni, origin=origin)  # nodes at the center and vertices of the cells
+    xci, xvi = lazy_grid(di, li, ni; origin=origin)  # nodes at the center and vertices of the cells
     igg = IGG(init_global_grid(nx, ny, nz; init_MPI=true)...) # init MPI
     ni_v = (nx - 2) * igg.dims[1], (ny - 2) * igg.dims[2], (nz - 2) * igg.dims[3]
     # ----------------------------------------------------
@@ -145,7 +145,9 @@ function thermal_convection3D(; ar=8, ny=16, nx=ny * 8, nz=ny * 8, figdir="figs3
     # Boundary conditions
     thermal_bc = TemperatureBoundaryConditions(;
         no_flux=(left=true, right=true, top=false, bot=false, front=true, back=true),
-        periodicity=(left=false, right=false, top=false, bot=false, front=false, back=false),
+        periodicity=(
+            left=false, right=false, top=false, bot=false, front=false, back=false
+        ),
     )
     # ----------------------------------------------------
 
@@ -166,7 +168,9 @@ function thermal_convection3D(; ar=8, ny=16, nx=ny * 8, nz=ny * 8, figdir="figs3
     flow_bc = FlowBoundaryConditions(;
         free_slip=(left=true, right=true, top=true, bot=true, front=true, back=true),
         no_slip=(left=false, right=false, top=false, bot=false, front=false, back=false),
-        periodicity=(left=false, right=false, top=false, bot=false, front=false, back=false),
+        periodicity=(
+            left=false, right=false, top=false, bot=false, front=false, back=false
+        ),
     )
     # ----------------------------------------------------
 
