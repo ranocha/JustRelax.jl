@@ -792,24 +792,39 @@ function JustRelax.solve!(
                 @tuple(stokes.ε)..., stokes.∇V, @tuple(stokes.V)..., _di...
             )
             @parallel (@idx ni) compute_ρg!(ρg[2], ϕ, rheology, (T=thermal.T, P=stokes.P))
-            @parallel (@idx ni) compute_τ_gp!(
+            @parallel (@idx ni .+ 1) compute_τ!(
                 stokes.τ.xx,
                 stokes.τ.yy,
-                stokes.τ.xy_c,
-                stokes.τ.II,
-                @tuple(stokes.τ_o)...,
-                @tuple(stokes.ε)...,
+                stokes.τ.xy,
+                stokes.τ_o.xx,
+                stokes.τ_o.yy,
+                stokes.τ_o.xy,
+                stokes.ε.xx,
+                stokes.ε.yy,
+                stokes.ε.xy,
                 η,
-                η_vep,
-                z,
-                thermal.T,
-                phase_v,
-                phase_c,
-                args_η,
-                tupleize(rheology), # needs to be a tuple
-                dt,
+                G,
                 θ_dτ,
+                dt,
             )
+            # @parallel (@idx ni) compute_τ_gp!(
+            #     stokes.τ.xx,
+            #     stokes.τ.yy,
+            #     stokes.τ.xy_c,
+            #     stokes.τ.II,
+            #     @tuple(stokes.τ_o)...,
+            #     @tuple(stokes.ε)...,
+            #     η,
+            #     η_vep,
+            #     z,
+            #     thermal.T,
+            #     phase_v,
+            #     phase_c,
+            #     args_η,
+            #     tupleize(rheology), # needs to be a tuple
+            #     dt,
+            #     θ_dτ,
+            # )
             @parallel center2vertex!(stokes.τ.xy, stokes.τ.xy_c)
             @hide_communication b_width begin # communication/computation overlap
                 @parallel compute_V!(
