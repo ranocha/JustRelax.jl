@@ -481,9 +481,9 @@ end
             λdQdτxx      = 0.5 * (τij[1] + dτxx) / τII_trial * λ
             λdQdτyy      = 0.5 * (τij[2] + dτyy) / τII_trial * λ
             λdQdτxy      = 0.5 * (τij[3] + dτxy) / τII_trial * λ
-            if F > 0
-                CUDA.@cushow i, j, λ, λdQdτxx, λdQdτyy, λdQdτxy
-            end
+            # if F > 0
+            #     CUDA.@cushow i, j, λ, λdQdτxx, λdQdτyy, λdQdτxy
+            # end
             # corrected stress
             dτxx_pl  = dτ_r * (-(τij[1] - τij_p_o[1]) * η_e - τij[1] + 2.0 * ηij * (εij_p[1] - λdQdτxx))
             dτyy_pl  = dτ_r * (-(τij[2] - τij_p_o[2]) * η_e - τij[2] + 2.0 * ηij * (εij_p[2] - λdQdτyy)) 
