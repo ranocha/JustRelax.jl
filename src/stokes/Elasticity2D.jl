@@ -325,7 +325,7 @@ end
     τxx,
     τyy,
     τxy,
-    TII,
+    τII,
     τxx_old,
     τyy_old,
     τxyv_old,
@@ -371,12 +371,18 @@ end
         dτxx      = dτ_r * (-(τij[1] - τij_p_o[1]) * ηij * _Gdt - τij[1] + 2.0 * ηij * (εij_p[1]))
         dτyy      = dτ_r * (-(τij[2] - τij_p_o[2]) * ηij * _Gdt - τij[2] + 2.0 * ηij * (εij_p[2])) 
         dτxy      = dτ_r * (-(τij[3] - τxy_p_o   ) * ηij * _Gdt - τij[3] + 2.0 * ηij * (εxy_p   )) 
-        τII_trial = sqrt(0.5*((τij[1]+dτxx)^2 + (τij[2]+dτyy)^2) + (τij[3]+dτxy)^2)
-        if τII_trial != 0.0
+        τII_trial = GeoParams.second_invariant(dτxx + τij[1], dτyy + τij[2], dτxy + τij[3])
+
+        is_pl, C, sinϕ, η_reg = plastic_params(MatParam[1])
+        τy = C + P[i,j]*sinϕ
+
+        if is_pl && τII_trial > τy && P[i,j] > 0.0
             # yield function
-            is_pl, C, sinϕ, η_reg = plastic_params(MatParam[1])
-            F            = τII_trial - C - P[i,j]*sinϕ
+            F            = τII_trial - τy
             λ = λ0[i,j]  = 0.8 * λ0[i,j] + 0.2 * (F>0.0) * F /(η[i, j] * 1 + η_reg) * is_pl
+            
+            # CUDA.@cushow τII_trial/1e6, τy/1e6, P[i,j]/1e6, λ, i, j
+
             λdQdτxx      = 0.5 * (τij[1] + dτxx) / τII_trial * λ
             λdQdτyy      = 0.5 * (τij[2] + dτyy) / τII_trial * λ
             λdQdτxy      = 0.5 * (τij[3] + dτxy) / τII_trial * λ
@@ -398,11 +404,109 @@ end
         εxx_ve     = εij_p[1] + 0.5 * τij_p_o[1] * _Gdt
         εyy_ve     = εij_p[2] + 0.5 * τij_p_o[2] * _Gdt
         εxy_ve     = εxy_p    + 0.5 * τxy_p_o    * _Gdt
-        εII_ve     = sqrt(0.5*(εxx_ve^2 + εyy_ve^2) + εxy_ve^2)
-        TII[i,j]   = sqrt(0.5*(τxx[i,j]^2 + τyy[i,j]^2) + τxy[i,j]^2)
-        η_vep[i,j] = TII[i,j] * 0.5 / εII_ve
+        εII_ve     = GeoParams.second_invariant(εxx_ve, εyy_ve, εxy_ve)
+        τII[i,j]   = GeoParams.second_invariant(τxx[i, j], τyy[i, j], τxy[i, j])
+        η_vep[i,j] = τII[i,j] * 0.5 / εII_ve
 
     end
+    
+    return nothing
+end
+
+@parallel_indices (i, j) function compute_τ_new!(
+    τxx,
+    τyy,
+    τxy,
+    TII,
+    τxx_old,
+    τyy_old,
+    τxyv_old,
+    εxx,
+    εyy,
+    εxyv,
+    P,
+    η,
+    η_vep,
+    phase_ratios,
+    MatParam,
+    dt,
+    θ_dτ,
+    λ0,
+    do_plastic
+)
+    nx, ny = size(η)
+
+    # convinience closure
+    @inline Base.@propagate_inbounds gather(A) = A[i, j], A[i + 1, j], A[i, j + 1], A[i + 1, j + 1] 
+    @inline Base.@propagate_inbounds av(A)     = (A[i + 1, j] + A[i + 2, j] + A[i + 1, j + 1] + A[i + 2, j + 1]) * 0.25
+    @inline Base.@propagate_inbounds function maxloc(A)
+        max(
+            A[i, j],
+            A[min(i+1, nx), j],
+            A[max(i-1, 1), j],
+            A[i, min(j+1, ny)],
+            A[i, max(j-1, 1),],
+        )
+    end
+
+    # @inbounds begin
+        G           = fn_ratio(get_G, MatParam, phase_ratios[i, j])
+        _Gdt        = inv(G * dt)
+        ηij         = η[i, j]
+        η_e        = ηij * _Gdt
+        dτ_r        = inv(θ_dτ + η_e + 1.0) # original
+        # cache tensors
+        εij_p       = εxx[i, j], εyy[i, j], gather(εxyv)
+        τij_p_o     = τxx_old[i,j], τyy_old[i,j], gather(τxyv_old) 
+        τij         = τxx[i,j], τyy[i,j], τxy[i, j]
+
+        εxy_p       = 0.25 * sum(εij_p[3])
+        τxy_p_o     = 0.25 * sum(τij_p_o[3])
+
+        # Stress increment
+        dτxx      = dτ_r * (-(τij[1] - τij_p_o[1]) * η_e - τij[1] + 2.0 * ηij * (εij_p[1]))
+        dτyy      = dτ_r * (-(τij[2] - τij_p_o[2]) * η_e - τij[2] + 2.0 * ηij * (εij_p[2])) 
+        dτxy      = dτ_r * (-(τij[3] - τxy_p_o   ) * η_e - τij[3] + 2.0 * ηij * (εxy_p   )) 
+        τII_trial = GeoParams.second_invariant(dτxx + τij[1], dτyy + τij[2], dτxy + τij[3])
+
+        is_pl, C, sinϕ, η_reg = plastic_params_phase(MatParam, phase_ratios[i, j])
+        τy = C + P[i,j]*sinϕ
+
+        if do_plastic && is_pl && τII_trial > abs(τy) 
+        # if do_plastic && is_pl 
+            # yield function
+            F            = τII_trial - C - P[i,j]*sinϕ
+            # λ = λ0[i,j]  = 0.8 * λ0[i,j] + 0.2 * (F>0.0) * F /(η[i, j] * 1 + η_reg) * is_pl
+            λ = λ0[i,j]  = (F>0.0) * F /( inv(inv(ηij) + _Gdt)  + η_reg) 
+            λdQdτxx      = 0.5 * (τij[1] + dτxx) / τII_trial * λ
+            λdQdτyy      = 0.5 * (τij[2] + dτyy) / τII_trial * λ
+            λdQdτxy      = 0.5 * (τij[3] + dτxy) / τII_trial * λ
+            if F > 0
+                CUDA.@cushow i, j, λ, λdQdτxx, λdQdτyy, λdQdτxy
+            end
+            # corrected stress
+            dτxx_pl  = dτ_r * (-(τij[1] - τij_p_o[1]) * η_e - τij[1] + 2.0 * ηij * (εij_p[1] - λdQdτxx))
+            dτyy_pl  = dτ_r * (-(τij[2] - τij_p_o[2]) * η_e - τij[2] + 2.0 * ηij * (εij_p[2] - λdQdτyy)) 
+            dτxy_pl  = dτ_r * (-(τij[3] - τxy_p_o)    * η_e - τij[3] + 2.0 * ηij * (εxy_p    - λdQdτxy)) 
+            τxx[i,j] += dτxx_pl
+            τyy[i,j] += dτyy_pl
+            τxy[i,j] += dτxy_pl
+
+        else
+            τxx[i,j] += dτxx
+            τyy[i,j] += dτyy
+            τxy[i,j] += dτxy
+        end
+        
+        # visco-elastic strain rates
+        εxx_ve     = εij_p[1] + 0.5 * τij_p_o[1] * _Gdt
+        εyy_ve     = εij_p[2] + 0.5 * τij_p_o[2] * _Gdt
+        εxy_ve     = εxy_p    + 0.5 * τxy_p_o    * _Gdt
+        εII_ve     = GeoParams.second_invariant(εxx_ve, εyy_ve, εxy_ve)
+        TII[i,j]   = GeoParams.second_invariant(τxx[i, j], τyy[i, j], τxy[i, j])
+        η_vep[i,j] = TII[i,j] * 0.5 / εII_ve
+
+    # end
     
     return nothing
 end
@@ -897,7 +1001,8 @@ function JustRelax.solve!(
     _di = inv.(di)
     ϵ, r, θ_dτ, ηdτ = pt_stokes.ϵ, pt_stokes.r, pt_stokes.θ_dτ, pt_stokes.ηdτ
     ni = nx, ny = size(stokes.P)
-    P_old = deepcopy(stokes.P)
+    @copy stokes.P0 stokes.P
+    P_old = stokes.P0
     # z = LinRange(di[2]*0.5, 1.0-di[2]*0.5, ny)
     # ~preconditioner
     ητ = deepcopy(η)
@@ -923,112 +1028,131 @@ function JustRelax.solve!(
     # solver loop
     wtime0 = 0.0
     # while iter < 1
-    while iter < 2 || (err > ϵ && iter ≤ iterMax)
 
-        wtime0 += @elapsed begin
-            @parallel compute_∇V!(stokes.∇V, stokes.V.Vx, stokes.V.Vy, _di...)
-            @parallel (@idx ni) compute_P!(
-                stokes.P,
-                P_old,
-                stokes.R.RP,
-                stokes.∇V,
-                η,
-                rheology,
-                phase_ratios.center,
-                dt,
-                r,
-                θ_dτ,
-            )
+    do_plastic = false
+    do_plastic = true
+    for i in 1:1
+        # if i > 1
+        #     do_plastic = true
+        #     println("Starting non-linear iterations...")
+        # end
+        err = 2 * ϵ
+        iter = 0
+        while iter < 2 || (err > ϵ && iter ≤ iterMax)
 
-            @parallel compute_strain_rate!(
-                stokes.ε.xx,
-                stokes.ε.yy,
-                stokes.ε.xy,
-                stokes.∇V,
-                @tuple(stokes.V)...,
-                _di...,
-            )
-            
-            @parallel (@idx ni) compute_τ_new!(
-                stokes.τ.xx,
-                stokes.τ.yy,
-                stokes.τ.xy_c,
-                stokes.τ.II,
-                stokes.τ_o.xx,
-                stokes.τ_o.yy,
-                stokes.τ_o.xy,
-                stokes.ε.xx,
-                stokes.ε.yy,
-                stokes.ε.xy,
-                stokes.P,
-                η,
-                η_vep,
-                rheology, # needs to be a tuple
-                dt,
-                θ_dτ,
-                λ
-            )
-
-            @parallel center2vertex!(stokes.τ.xy, stokes.τ.xy_c)
-            
-            # @parallel maxloc!(ητ, η_vep)
-            @parallel compute_V!(
-                @tuple(stokes.V)...,
-                stokes.P,
-                stokes.τ.xx,
-                stokes.τ.yy,
-                stokes.τ.xy,
-                ηdτ,
-                ρg...,
-                ητ,
-                _di...,
-            )
-            # apply boundary conditions boundary conditions
-            flow_bcs!(stokes, flow_bcs, di)
-            # ------------------------------
-
-            # Update buoyancy and viscosity -
-            args_ηv = (; T = thermal.T, P = stokes.P, dt=Inf)
-            # @parallel (@idx ni) compute_viscosity_gp!(η, args_ηv, rheology)
-            @parallel (@idx ni) compute_viscosity!(η, phase_ratios.center, stokes.ε.xx, stokes.ε.yy, stokes.ε.xy, args_ηv, rheology)
-            @parallel (@idx ni) compute_ρg!(ρg[2], phase_ratios.center, rheology, (T=thermal.T, P=stokes.P))
-            @parallel maxloc!(ητ, η)
-            # η0 = deepcopy(η)
-
-        end
-
-        iter += 1
-        if iter % nout == 0 && iter > 1
-            @parallel (@idx ni) compute_Res!(
-                stokes.R.Rx,
-                stokes.R.Ry,
-                stokes.P,
-                stokes.τ.xx,
-                stokes.τ.yy,
-                stokes.τ.xy,
-                ρg[1],
-                ρg[2],
-                _di...,
-            )
-            errs = ntuple(Val(3)) do i
-                maximum(x->abs.(x), getfield(stokes.R, i))
-            end
-            err = maximum(errs)
-            push!(norm_Rx, errs[1])
-            push!(norm_Ry, errs[2])
-            push!(norm_∇V, errs[3])
-            push!(err_evo1, err)
-            push!(err_evo2, iter)
-            # if (verbose && err > ϵ) || (iter == iterMax)
-                @printf(
-                    "Total steps = %d, err = %1.3e [norm_Rx=%1.3e, norm_Ry=%1.3e, norm_∇V=%1.3e] \n",
-                    iter,
-                    err,
-                    norm_Rx[end],
-                    norm_Ry[end],
-                    norm_∇V[end]
+            wtime0 += @elapsed begin
+                # Update buoyancy and viscosity -
+                args_ηv = (; T = thermal.T, P = stokes.P, dt=Inf)
+                
+                if do_plastic
+                    ν = iter > 1 ? 0.5 : 1.0  
+                    # if iter > 1000
+                    @parallel (@idx ni) compute_viscosity!(η, ν, phase_ratios.center, stokes.ε.xx, stokes.ε.yy, stokes.ε.xy, args_ηv, rheology[1])
+                    @parallel maxloc!(ητ, η)
+                end
+                # end
+                @parallel (@idx ni) compute_ρg!(ρg[2], phase_ratios.center, rheology[1], (T=thermal.T, P=stokes.P))
+                
+                @parallel compute_∇V!(stokes.∇V, stokes.V.Vx, stokes.V.Vy, _di...)
+                @parallel (@idx ni) compute_P!(
+                    stokes.P,
+                    P_old,
+                    stokes.R.RP,
+                    stokes.∇V,
+                    η,
+                    rheology[1],
+                    phase_ratios.center,
+                    dt,
+                    r,
+                    θ_dτ,
                 )
-            # end
+                @parallel compute_strain_rate!(
+                    stokes.ε.xx,
+                    stokes.ε.yy,
+                    stokes.ε.xy,
+                    stokes.∇V,
+                    @tuple(stokes.V)...,
+                    _di...,
+                )
+                
+                @parallel (@idx ni) compute_τ_new!(
+                    stokes.τ.xx,
+                    stokes.τ.yy,
+                    stokes.τ.xy_c,
+                    stokes.τ.II,
+                    stokes.τ_o.xx,
+                    stokes.τ_o.yy,
+                    stokes.τ_o.xy,
+                    stokes.ε.xx,
+                    stokes.ε.yy,
+                    stokes.ε.xy,
+                    stokes.P,
+                    η,
+                    η_vep,
+                    phase_ratios.center,
+                    rheology[2], # needs to be a tuple
+                    dt,
+                    θ_dτ,
+                    λ,
+                    do_plastic
+                )
+                @parallel center2vertex!(stokes.τ.xy, stokes.τ.xy_c)
+                
+                # apply stress boundary conditions            
+                # free_surface_stress!(stokes, flow_bcs)
+                
+                @parallel compute_V!(
+                    @tuple(stokes.V)...,
+                    stokes.P,
+                    stokes.τ.xx,
+                    stokes.τ.yy,
+                    stokes.τ.xy,
+                    ηdτ,
+                    ρg...,
+                    ητ,
+                    _di...,
+                )
+
+                # apply boundary conditions
+                # free_surface_vy!(stokes, η, rheology, dt, di, flow_bcs; surface_phase = 1)
+                flow_bcs!(stokes, flow_bcs, di)
+                # ------------------------------
+
+            end
+
+            iter += 1
+            if iter % nout == 0 && iter > 1
+                @parallel (@idx ni) compute_Res!(
+                    stokes.R.Rx,
+                    stokes.R.Ry,
+                    stokes.P,
+                    stokes.τ.xx,
+                    stokes.τ.yy,
+                    stokes.τ.xy,
+                    ρg[1],
+                    ρg[2],
+                    _di...,
+                )
+                errs = ntuple(Val(3)) do i
+                    maximum(x->abs.(x), getfield(stokes.R, i))
+                end
+                err = maximum(errs)
+                push!(norm_Rx, errs[1])
+                push!(norm_Ry, errs[2])
+                push!(norm_∇V, errs[3])
+                push!(err_evo1, err)
+                push!(err_evo2, iter)
+                # if (verbose && err > ϵ) || (iter == iterMax)
+                    @printf(
+                        "Total steps = %d, err = %1.3e [norm_Rx=%1.3e, norm_Ry=%1.3e, norm_∇V=%1.3e] \n",
+                        iter,
+                        err,
+                        norm_Rx[end],
+                        norm_Ry[end],
+                        norm_∇V[end]
+                    )
+                # end
+            end
         end
     end
 
@@ -1089,23 +1213,22 @@ end
     return nothing
 end
 
-@parallel_indices (i, j) function compute_viscosity!(η, ratios_center, εxx, εyy, εxyv, args, MatParam)
+@parallel_indices (i, j) function compute_viscosity!(η, ν, ratios_center, εxx, εyy, εxyv, args, MatParam)
 
     # convinience closure
     @inline Base.@propagate_inbounds gather(A) = A[i, j], A[i + 1, j], A[i, j + 1], A[i + 1, j + 1] 
     @inline Base.@propagate_inbounds av(A)     = (A[i + 1, j] + A[i + 2, j] + A[i + 1, j + 1] + A[i + 2, j + 1]) * 0.25
    
     εII_0 = (εxx[i, j] == 0 && εyy[i, j] == 0) ? 1e-15 : 0.0
-    ν = 0.05
     @inbounds begin
-        ratio_ij      = ratios_center[i,j]
-        args_ij       = (; dt = args.dt, P = (args.P[i, j]), T=av(args.T), τII_old=0.0)
-        εij_p         = εII_0 + εxx[i, j], -εII_0 + εyy[i, j], gather(εxyv)
-        τij_p_o       = 0.0, 0.0, (0.0, 0.0, 0.0, 0.0)
+        ratio_ij = ratios_center[i,j]
+        args_ij  = (; dt = args.dt, P = (args.P[i, j]), T=av(args.T), τII_old=0.0)
+        εij_p    = εII_0 + εxx[i, j], -εII_0 + εyy[i, j], gather(εxyv)
+        τij_p_o  = 0.0, 0.0, (0.0, 0.0, 0.0, 0.0)
         # # update stress and effective viscosity
         _, _, ηi = compute_τij_ratio(MatParam, ratio_ij, εij_p, args_ij, τij_p_o)
-        ηi = exp((1-ν)*log(η[i, j]) + ν*log(ηi))
-        η[i, j] = clamp(ηi, 1e16, 1e24)
+        ηi       = exp((1-ν)*log(η[i, j]) + ν*log(ηi))
+        η[i, j]  = clamp(2*ηi, 1e16, 1e24)
     end
     
     return nothing
@@ -1133,5 +1256,69 @@ function compute_τij_ratio(MatParam::NTuple{N,AbstractMaterialParamsStruct}, ra
     end
     return τij, τII, η_eff
 end
+
+
+@inline isplastic(x::AbstractPlasticity) = true
+@inline isplastic(x) = false
+@inline plastic_params(v) = plastic_params(v.CompositeRheology[1].elements)
+
+@generated function _plastic_params_phase(MatParam::NTuple{N,AbstractMaterialParamsStruct}, ratio) where N
+    quote
+        Base.@_inline_meta 
+        empty_args = (0.0, 0.0, 0.0), 0.0, 0.0
+        Base.@nexprs $N i -> a_i = ratio[i] == 0 ? empty_args : plastic_params(MatParam[i]) 
+        Base.@ncall $N tuple a
+    end
+end
+
+function plastic_params_phase(MatParam::NTuple{N,AbstractMaterialParamsStruct}, ratio) where N
+    data = _plastic_params_phase(MatParam, ratio)
+    # average over phases
+    is_pl = false
+    C = 0.0
+    sinϕ = 0.0
+    η_reg = 0.0
+    for n in 1:N
+        data[n][1] && (is_pl = true)
+        C += data[n][2] * ratio[n]
+        sinϕ += data[n][3] * ratio[n]
+        η_reg += data[n][4] * ratio[n]
+    end
+    return is_pl, C, sinϕ, η_reg
+end
+
+@generated function plastic_params(v::NTuple{N, Any}) where N
+    quote
+        Base.@_inline_meta
+        Base.@nexprs $N i -> isplastic(v[i]) && return true, v[i].C.val, v[i].sinϕ.val, v[i].η_vp.val
+        (false, 0.0, 0.0, 0.0)
+    end
+end
+
+@generated function _plastic_params_phase(rheology::NTuple{N,AbstractMaterialParamsStruct}, ratio) where N
+    quote
+        Base.@_inline_meta 
+        empty_args =  (false, 0.0, 0.0, 0.0)
+        Base.@nexprs $N i -> a_i = ratio[i] == 0 ? empty_args : plastic_params(rheology[i]) 
+        Base.@ncall $N tuple a
+    end
+end
+
+function plastic_params_phase(rheology::NTuple{N,AbstractMaterialParamsStruct}, ratio) where N
+    data = _plastic_params_phase(rheology, ratio)
+    # average over phases
+    is_pl = false
+    C = 0.0
+    sinϕ = 0.0
+    η_reg = 0.0
+    for n in 1:N
+        data[n][1] && (is_pl = true)
+        C += data[n][2] * ratio[n]
+        sinϕ += data[n][3] * ratio[n]
+        η_reg += data[n][4] * ratio[n]
+    end
+    return is_pl, C, sinϕ, η_reg
+end
+
 
 end # END OF MODULE

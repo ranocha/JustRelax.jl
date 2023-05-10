@@ -14,7 +14,7 @@ function init_T!(T, z)
             T[i] = dTdz * (zi-35e3) + 600 + 273
 
         else
-            T[i] = 1280 * 3e-5 * 9.81 * (zi-120e3) / 1200 + 1300 + 273
+            T[i] = 1280 * 3e-5 * 9.81 * (zi-120e3) / 1200 + 1330 + 273
         end
     end
     return 
@@ -23,7 +23,7 @@ end
 function init_P!(P, depth)
    
     for i in eachindex(P)
-        P[i] = - depth[i] * 3.3e3 * 9.81
+        P[i] =  abs(depth[i] * 3.3e3 * 9.81)
     end
 
     return nothing
@@ -41,13 +41,12 @@ function compute_viscosity!(η, args, rheology, ε)
             rheology[4]
         end
 
-        elements =  x[1].CompositeRheology[1].elements
+        elements =  phase.CompositeRheology[1].elements
 
         ηeff = 0.0
         for el_i in elements
             (; A, n, E, V,  r, R) = el_i
             ηi = 0.5 * A.val^(-1/n.val) * ε^((1-n.val)/n.val) * exp((E.val + args.P[i]*V.val)/(n.val*R.val*args.T[i]))
-
             ηeff += inv(ηi) 
         end
         η[i] = clamp(1/ηeff, 1e18, 1e26)
@@ -102,7 +101,7 @@ lines!(ax2, log10.(η), -depth./1e3)
 # scatter!(ax2, log10.(η), -depth./1e3, color=:black)
 # lines!(ax2, log10.(ηdif), -depth./1e3, color=:red)
 # lines!(ax2, log10.(ηcust), -depth./1e3, color=:red)
-ax1.xlabel = "T (K)"
-ax1.ylabel = "deepth (km)"
-# axislegend(ax2, position=:lb)
+# ax1.xlabel = "T (K)"
+# ax1.ylabel = "deepth (km)"
+# # axislegend(ax2, position=:lb)
 f

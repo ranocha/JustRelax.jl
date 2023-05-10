@@ -245,8 +245,9 @@ function _inject_particles_phase!(
         for i in 1:max_xcell
             particles_num += index[i, idx_cell...]
         end
-        # CUDA.@cushow particles_num
-
+        if particles_num == 0
+            CUDA.@cushow particles_num
+        end
         # coordinates of the lower-left center
         xvi = corner_coordinate(grid, idx_cell)
 

@@ -14,31 +14,36 @@ struct TemperatureBoundaryConditions{T,nD} <: AbstractBoundaryConditions
     end
 end
 
-struct FlowBoundaryConditions{T,nD} <: AbstractBoundaryConditions
+struct FlowBoundaryConditions{T,B,nD} <: AbstractBoundaryConditions
     no_slip::T
     free_slip::T
     periodicity::T
+    free_surface::Bool
 
     function FlowBoundaryConditions(;
         no_slip::T=(left=false, right=false, top=false, bot=false),
         free_slip::T=(left=true, right=true, top=true, bot=true),
         periodicity::T=(left=false, right=false, top=false, bot=false),
-    ) where {T}
+        free_surface::B=false,
+    ) where {T,B}
         @assert length(no_slip) === length(free_slip) === length(periodicity)
+        if free_surface 
+            @assert no_slip.top === free_slip.top === false
+        end
         nD = length(no_slip) == 4 ? 2 : 3
-        return new{T,nD}(no_slip, free_slip, periodicity)
+        return new{T,free_surface,nD}(no_slip, free_slip, periodicity, free_surface)
     end
 end
 
-bc_index(x::NTuple{2,T}) where T = mapreduce(xi->max(size(xi)...), max, x)
-bc_index(x::T) where {T<:AbstractArray{<:Any, 2}} = max(size(x)...)
+bc_index(x::NTuple{2,T}) where {T} = mapreduce(xi -> max(size(xi)...), max, x)
+bc_index(x::T) where {T<:AbstractArray{<:Any,2}} = max(size(x)...)
 
-function bc_index(x::NTuple{3,T}) where T
+function bc_index(x::NTuple{3,T}) where {T}
     nx, ny, nz = size(x[1])
     return max((nx, ny), (ny, nz), (nx, nz))
 end
 
-function bc_index(x::T) where T<:AbstractArray{<:Any, 3}
+function bc_index(x::T) where {T<:AbstractArray{<:Any,3}}
     nx, ny, nz = size(x)
     return max((nx, ny), (ny, nz), (nx, nz))
 end
@@ -66,7 +71,7 @@ end
 
 Apply the prescribed flow boundary conditions `bc` on the `stokes` 
 """
-function flow_bcs!(stokes, bcs::FlowBoundaryConditions, di) 
+function flow_bcs!(stokes, bcs::FlowBoundaryConditions, di)
     V = @unpack stokes.V
     n = bc_index(V)
     _di = inv.(di)
@@ -83,6 +88,151 @@ function flow_bcs!(stokes, bcs::FlowBoundaryConditions, di)
 end
 
 # BOUNDARY CONDITIONS KERNELS
+
+# free surface stress boundary conditions
+function free_surface_stress!(
+    ::StokesArrays, ::FlowBoundaryConditions{A,false,B}
+) where {A,B}
+    return nothing
+end
+
+function free_surface_stress!(
+    stokes::StokesArrays, ::FlowBoundaryConditions{A,true,B}
+) where {A,B}
+    V = @unpack stokes.V
+    n = bc_index(V)
+    @parallel (@idx n) free_surface_stress!(stokes.τ.yy, stokes.τ.xy)
+    return nothing
+end
+
+@parallel_indices (i) function free_surface_stress!(
+    τyy::T, τxy::T
+) where {T<:AbstractArray{<:Any,2}}
+    (i ≤ size(τyy, 1)) && (τyy[i, end] = 0.0)
+    (i ≤ size(τxy, 1)) && (τxy[i, end] = -τxy[i, end - 1])
+    return nothing
+end
+
+# free surface vertical velocity boundary conditions
+function free_surface_vy!(
+    stokes::StokesArrays,
+    η,
+    rheology,
+    dt,
+    di,
+    ::FlowBoundaryConditions{A,false,B};
+    surface_phase::Integer=1,
+) where {A,B}
+    return nothing
+end
+
+function free_surface_vy!(
+    stokes::StokesArrays,
+    η,
+    rheology,
+    dt,
+    di,
+    ::FlowBoundaryConditions{A,true,B};
+    surface_phase::Integer=1,
+) where {A,B}
+    V = @unpack stokes.V
+    n = size(stokes.V.Vy, 1) - 2
+    @parallel (@idx n) free_surface_vy!(
+        V..., stokes.P, stokes.P0, stokes.τ_o.yy, η, rheology[surface_phase], dt, di...
+    )
+    return nothing
+end
+
+@inline function _free_surface_vy!(Vy, dVx, P, P_old, τyy_old, η, G, dt, dx, dy)
+    return Vy +
+           (3 / 2) *
+           (P / (2.0 * η) - (τyy_old + P_old) / (2.0 * G * dt) + (1 / 3) * dVx / dx) *
+           dy
+end
+
+@parallel_indices (i) function free_surface_vy!(
+    Vx::T, Vy::T, P::T, P_old::T, τyy_old::T, η::T, G::T, dt, dx, dy
+) where {T<:AbstractArray{<:Any,2}}
+    Vy[i + 1, end] = _free_surface_vy!(
+        Vy[i + 1, end - 1],
+        Vx[i + 1, end] - Vx[i, end],
+        P[i, end],
+        P_old[i, end],
+        τyy_old[i, end],
+        η[i, end],
+        G[i, end],
+        dt,
+        dx,
+        dy,
+    )
+    return nothing
+end
+
+@parallel_indices (i) function free_surface_vy!(
+    Vx::T, Vy::T, P::T, P_old::T, τyy_old::T, η::T, rheology, dt, dx, dy
+) where {T<:AbstractArray{<:Any,2}}
+    Vy[i + 1, end] = _free_surface_vy!(
+        Vy[i + 1, end - 1],
+        Vx[i + 1, end] - Vx[i, end],
+        P[i, end],
+        P_old[i, end],
+        τyy_old[i, end],
+        η[i, end],
+        get_G(rheology),
+        dt,
+        dx,
+        dy,
+    )
+    return nothing
+end
+
+@inline function _free_surface_vy!(Vy, dVx, P, P_old, τyy_old, εII_pl, η, G, dt, dx, dy)
+    return Vy +
+           (3 / 2) *
+           (
+               P / (2.0 * η * (1 - εII_pl)) - (τyy_old + P_old) / (2.0 * G * dt) +
+               (1 / 3) * dVx / dx
+           ) *
+           dy
+end
+
+@parallel_indices (i) function free_surface_vy!(
+    Vx::T, Vy::T, P::T, P_old::T, τyy_old::T, εII_pl::T, η::T, G::T, dt, dx, dy
+) where {T<:AbstractArray{<:Any,2}}
+    Vy[i, end] = _free_surface_vy!(
+        Vy[i, end - 1],
+        Vx[i + 1, end] - Vx[i, end],
+        P[i, end],
+        P_old[i, end],
+        τyy_old[i, end],
+        εII_pl[i, end],
+        η[i, end],
+        G[i, end],
+        dt,
+        dx,
+        dy,
+    )
+    return nothing
+end
+
+@parallel_indices (i) function free_surface_vy!(
+    Vx::T, Vy::T, P::T, P_old::T, τyy_old::T, εII_pl::T, η::T, rheology, dt, dx, dy
+) where {T<:AbstractArray{<:Any,2}}
+    Vy[i, end] = _free_surface_vy!(
+        Vy[i, end - 1],
+        Vx[i + 1, end] - Vx[i, end],
+        P[i, end],
+        P_old[i, end],
+        τyy_old[i, end],
+        εII_pl[i, end],
+        η[i, end],
+        get_G(rheology),
+        dt,
+        dx,
+        dy,
+    )
+    return nothing
+end
 
 @parallel_indices (i) function no_slip!(Ax, Ay, bc, _dx, _dy)
     @inbounds begin
@@ -122,21 +272,21 @@ end
 
 @parallel_indices (i, j) function free_slip!(Ax, Ay, Az, bc)
     @inbounds begin
-       # free slip in the front and back XZ planes
+        # free slip in the front and back XZ planes
         if bc.front
             if i ≤ size(Ax, 1) && j ≤ size(Ax, 3)
-                Ax[i, 1, j] = Ax[i, 2,  j]
+                Ax[i, 1, j] = Ax[i, 2, j]
             end
             if i ≤ size(Az, 1) && j ≤ size(Az, 3)
-                Az[i, 1, j] = Az[i, 2,  j]
+                Az[i, 1, j] = Az[i, 2, j]
             end
         end
         if bc.back
             if i ≤ size(Ax, 1) && j ≤ size(Ax, 3)
-                Ax[i, end, j] = Ax[end-i, 1, j]
+                Ax[i, end, j] = Ax[end - i, 1, j]
             end
             if i ≤ size(Az, 1) && j ≤ size(Az, 3)
-                Az[i, end, j] = Az[end-i, 1, j]
+                Az[i, end, j] = Az[end - i, 1, j]
             end
         end
         # free slip in the front and back XY planes
@@ -150,10 +300,10 @@ end
         end
         if bc.bot
             if i ≤ size(Ax, 1) && j ≤ size(Ax, 2)
-                Ax[i, j, end] = Ax[end-i, j, 1]
+                Ax[i, j, end] = Ax[end - i, j, 1]
             end
             if i ≤ size(Ay, 1) && j ≤ size(Ay, 2)
-                Ay[i, j, end] = Ay[end-i, j, 1]
+                Ay[i, j, end] = Ay[end - i, j, 1]
             end
         end
         # free slip in the front and back YZ planes
@@ -167,17 +317,17 @@ end
         end
         if bc.right
             if i ≤ size(Ay, 2) && j ≤ size(Ay, 3)
-                Ay[end, i, j] = Ay[end-1, i, j]
+                Ay[end, i, j] = Ay[end - 1, i, j]
             end
             if i ≤ size(Az, 2) && j ≤ size(Az, 3)
-                Az[end, i, j] = Az[end-1, i, j]
+                Az[end, i, j] = Az[end - 1, i, j]
             end
-        end 
+        end
     end
     return nothing
 end
 
-@parallel_indices (i) function free_slip!(T::_T, bc) where _T<:AbstractArray{<:Any, 2}
+@parallel_indices (i) function free_slip!(T::_T, bc) where {_T<:AbstractArray{<:Any,2}}
     @inbounds begin
         if i ≤ size(T, 1)
             bc.bot && (T[i, 1] = T[i, 2])
@@ -191,7 +341,7 @@ end
     return nothing
 end
 
-@parallel_indices (i, j) function free_slip!(T::_T, bc) where _T<:AbstractArray{<:Any, 3}
+@parallel_indices (i, j) function free_slip!(T::_T, bc) where {_T<:AbstractArray{<:Any,3}}
     nx, ny, nz = size(T)
     @inbounds begin
         if i ≤ nx && j ≤ ny
@@ -224,7 +374,9 @@ end
     return nothing
 end
 
-@parallel_indices (i) function periodic_boundaries!(T::_T, bc) where _T<:AbstractArray{<:Any, 2}
+@parallel_indices (i) function periodic_boundaries!(
+    T::_T, bc
+) where {_T<:AbstractArray{<:Any,2}}
     @inbounds begin
         if i ≤ size(T, 1)
             bc.bot && (T[i, 1] = T[i, end - 2])
@@ -238,7 +390,9 @@ end
     return nothing
 end
 
-@parallel_indices (i, j) function periodic_boundaries!(T::_T, bc) where _T<:AbstractArray{<:Any, 3}
+@parallel_indices (i, j) function periodic_boundaries!(
+    T::_T, bc
+) where {_T<:AbstractArray{<:Any,3}}
     nx, ny, nz = size(T)
     @inbounds begin
         if i ≤ nx && j ≤ ny

@@ -164,9 +164,8 @@ end
         ratio_ij      = ratios_center[i,j]
         args_ij       = (; dt = args.dt, P = (args.P[i, j]), depth = abs(args.depth[j]), T=av(args.T), τII_old=0.0)
         εij_p         = εII_0 + εxx[i, j], -εII_0 + εyy[i, j], gather(εxyv)
-        # εij_p         = εII_0 + εxx[i, j], εII_0 + εyy[i, j], εII_0 .+ gather(εxyv)
         τij_p_o       = 0.0, 0.0, (0.0, 0.0, 0.0, 0.0)
-        # # update stress and effective viscosity
+        # update stress and effective viscosity
         _, _, ηi = compute_τij_ratio(MatParam, ratio_ij, εij_p, args_ij, τij_p_o)
         η[i, j] = clamp(ηi, 1e16, 1e24)
     end
@@ -181,23 +180,27 @@ macro all_j(A)
 end
 
 @parallel function init_P!(P, ρg, z)
-    @all(P) = @all(ρg)*(-@all_j(z))
+    @all(P) = @all(ρg) * (-@all_j(z)) * <(@all_j(z), 0.0)
     return nothing
 end
 
 # Half-space-cooling model
-@parallel_indices (i, j) function init_T2!(T, z)
-    zi   = abs(z[j])
-    if zi ≤ 35e3
+@parallel_indices (i, j) function init_T!(T, z)
+    zi = z[j]
+    if 0 ≥ zi > -35e3
         dTdz = 600 / 35e3
-        T[i, j] = dTdz * zi + 273
+        T[i, j] = dTdz * -zi + 273
 
-    elseif 120e3 ≥ zi > 35e3
+    elseif -120e3 ≤ zi < -35e3
         dTdz = 700 / 85e3
-        T[i, j] = dTdz * (zi-35e3) + 600 + 273
+        T[i, j] = dTdz * (-zi-35e3) + 600 + 273
+
+    elseif zi < -120e3
+        T[i, j] = 1280 * 3e-5 * 9.81 * (-zi-120e3) / 1200 + 1300 + 273
 
     else
-        T[i, j] = 1280 * 3e-5 * 9.81 * (zi-120e3) / 1200 + 1300 + 273
+        T[i, j] = 273.0
+        
     end
     return 
 end
@@ -206,26 +209,12 @@ function elliptical_perturbation!(T, δT, xc, yc, r, xvi)
 
     @parallel_indices (i, j) function _elliptical_perturbation!(T, δT, xc, yc, r, x, y)
         @inbounds if (((x[i]-xc ))^2 + ((y[j] - yc))^2) ≤ r^2
-            # T[i, j] *= δT/100 + 1
-            T[i, j] += 150.0
+            T[i, j] += δT
         end
         return nothing
     end
 
     @parallel _elliptical_perturbation!(T, δT, xc, yc, r, xvi...)
-end
-
-function random_perturbation!(T, δT, xbox, ybox, xvi)
-
-    @parallel_indices (i, j) function _random_perturbation!(T, δT, xbox, ybox, x, y)
-        @inbounds if (xbox[1] ≤ x[i] ≤ xbox[2]) && (abs(ybox[1]) ≤ abs(y[j]) ≤ abs(ybox[2]))
-            δTi = δT * (rand() -  0.5) # random perturbation within ±δT [%]
-            T[i, j] *= δTi/100 + 1
-        end
-        return nothing
-    end
-    
-    @parallel (@idx size(T)) _random_perturbation!(T, δT, xbox, ybox, xvi...)
 end
 
 # --------------------------------------------------------------------------------
@@ -254,21 +243,39 @@ end
 
 Rayleigh_number(ρ, α, ΔT, κ, η0) = ρ * 9.81 * α * ΔT * 2890e3^3 * inv(κ * η0) 
 
+@parallel_indices (i, j) function compute_invariant!(II, xx, yy, xyv)
+
+    # convinience closure
+    @inline Base.@propagate_inbounds gather(A) = A[i, j], A[i + 1, j], A[i, j + 1], A[i + 1, j + 1] 
+   
+    @inbounds begin
+        ij       = xx[i, j], yy[i, j], gather(xyv)
+        II[i, j] = GeoParams.second_invariant_staggered(ij...)
+    end
+    
+    return nothing
+end
+
 function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
 
     # Physical domain ------------------------------------
     ly       = 500e3
     lx       = ly * ar
-    origin   = 0.0, -ly                         # origin coordinates
-    ni       = nx, ny                           # number of cells
-    li       = lx, ly                           # domain length in x- and y-
-    di       = @. li / ni                       # grid step in x- and -y
+    ni       = nx, ny                  # number of cells
+    li       = lx, ly                  # domain length in x- and y-
+    di       = @. li / ni              # grid step in x- and -y
+    n_offset = Int(50e3÷di[2])+1
+    li       = lx, li[2] + di[2] * n_offset
+    origin   = 0.0, -ly                # origin coordinates
     xci, xvi = lazy_grid(di, li, ni; origin=origin) # nodes at the center and vertices of the cells
-    # ----------------------------------------------------
+    # xvi      = xvi[1], xvi[2] .+ di[2]*3    
+    # xci      = xci[1], xci[2] .+ di[2]*3    
+    # # ----------------------------------------------------
 
     # Physical properties using GeoParams ----------------
     # Define rheolgy struct
-    rheology     = init_rheologies()
+    rheology     = init_rheologies(; is_plastic = false)
+    rheology_pl  = init_rheologies(; is_plastic = true)
     κ            = (rheology[1].Conductivity[1].k / (rheology[1].HeatCapacity[1].cp * rheology[1].Density[1].ρ0)).val
     dt = dt_diff = 0.5 * min(di...)^2 / κ / 2.01 # diffusive CFL timestep limiter
     # ----------------------------------------------------
@@ -282,36 +289,29 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
         periodicity = (left = false, right = false, top = false, bot = false),
     )
     # initialize thermal profile - Half space cooling
-    adiabat     = 0.3 # adiabatic gradient
-    Tp          = 1280
-    Tp          = 1400
-    Tm          = Tp + adiabat * 2890
-    Tmin, Tmax  = 300.0, 4000.0
-    # thermal.T  .= 1600.0
-    @parallel init_T2!(thermal.T, xvi[2])
+    Tmin, Tmax  = 273.0, 4000.0
+    @parallel init_T!(thermal.T, xvi[2])
     thermal_bcs!(thermal.T, thermal_bc)
     # Elliptical temperature anomaly 
-    # δT          = 5.0              # thermal perturbation (in %)
-    # # random_perturbation!(thermal.T, δT, (lx*1/8, lx*7/8), (-2000e3, -2600e3), xvi)
-    # random_perturbation!(thermal.T, δT, (lx*1/8, lx*7/8), (-0, -Inf), xvi)
-    δT          = 5.0              # thermal perturbation (in %)
-    # xc, yc      = 0.5*lx, -0.75*ly  # origin of thermal anomaly
+    δT          = 0.0           # temperature perturbation    
     xc, yc      = 0.5*lx, -400e3  # origin of thermal anomaly
-    r           = 50e3             # radius of perturbation
+    r           = 50e3            # radius of perturbation
     elliptical_perturbation!(thermal.T, δT, xc, yc, r, xvi)
     @views thermal.T[:, end] .= Tmin
     # @views thermal.T[:, 1]   .= Tmax
-    Tmax = thermal.T[1,1]
+    # Tmax = thermal.T[1,1]
+    Tbot = thermal.T[:, 1]
     # ----------------------------------------------------
 
     # STOKES ---------------------------------------------
     # Allocate arrays needed for every Stokes problem
     stokes          = StokesArrays(ni, ViscoElastic)
-    pt_stokes       = PTStokesCoeffs(li, di; ϵ=1e-4,  CFL = 1.0 / √2.1)
+    pt_stokes       = PTStokesCoeffs(li, di; ϵ=1e-4,  CFL = 0.5 / √2.1)
     # ----------------------------------------------------
 
     # Initialize particles -------------------------------
     nxcell, max_xcell, min_xcell = 16, 24, 8
+    # nxcell, max_xcell, min_xcell = 32, 48, 16
     particles = twoxtwo_particles2D(
         nxcell, max_xcell, min_xcell, xvi[1], xvi[2], di[1], di[2], nx, ny
     )
@@ -340,12 +340,17 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     η               = @ones(ni...)
     args_ηv         = (; T = thermal.T, P = stokes.P, depth = xci[2], dt = Inf)
     @parallel (@idx ni) compute_viscosity!(η, phase_ratios.center, stokes.ε.xx, stokes.ε.yy, stokes.ε.xy, args_ηv, rheology)
-    # @parallel (@idx ni) compute_viscosity!(η, phase_ratios.center, args_ηv, rheology)
     η_vep           = deepcopy(η)
     # Boundary conditions
+    # flow_bcs = FlowBoundaryConditions(; 
+    #     free_slip    = (left = true, right=true, top=false, bot=true),
+    #     periodicity  = (left = false, right = false, top = false, bot = false),
+    #     free_surface = true
+    # )
     flow_bcs = FlowBoundaryConditions(; 
-        free_slip   = (left = true, right=true, top=true, bot=true),
-        periodicity = (left = false, right = false, top = false, bot = false),
+        free_slip    = (left = true, right=true, top=true, bot=true),
+        periodicity  = (left = false, right = false, top = false, bot = false),
+        free_surface = false
     )
 
     # IO ----- -------------------------------------------
@@ -371,19 +376,18 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
 
     # Time loop
     t, it = 0.0, 0
-    nt    = 10
+    nt    = 200
     T_buffer = deepcopy(thermal.T[2:end-1, :])
     local iters
-    while it < nt    
-    # while (t/(1e6 * 3600 * 24 *365.25)) < 100
+    # while it < nt    
+    while (t/(1e6 * 3600 * 24 *365.25)) < 50
         # Update buoyancy and viscosity -
         args_ηv = (; T = thermal.T, P = stokes.P, depth = xci[2], dt=Inf)
-        # @parallel (@idx ni) compute_viscosity!(η, phase_ratios.center, stokes.ε.xx, stokes.ε.yy, stokes.ε.xy, args_ηv, rheology)
+        @parallel (@idx ni) compute_viscosity!(η, phase_ratios.center, stokes.ε.xx, stokes.ε.yy, stokes.ε.xy, args_ηv, rheology)
         @parallel (@idx ni) compute_ρg!(ρg[2], phase_ratios.center, rheology, (T=thermal.T, P=stokes.P))
         # ------------------------------
  
         # Stokes solver ----------------
-        # args_η = (; T = thermal.T, P = stokes.P, depth = xci[2], dt=dt)
         λ, iters = solve!(
             stokes,
             thermal,
@@ -394,31 +398,16 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
             η,
             η_vep,
             phase_ratios,
-            # it > 3 ?  (; linear=rheology_depth,) : (; linear=rheology,), # do a few initial time-steps without plasticity to improve convergence
-            # (; linear=rheology), # do a few initial time-steps without plasticity to improve convergence
-            # rheology_depth, # do a few initial time-steps without plasticity to improve convergence
-            # (; linear=rheology, plastic=rheology_depth), # do a few initial time-steps without plasticity to improve convergence
-            rheology,
+            (rheology, rheology_pl),
+            # it > 5 ? rheology_pl : rheology,
             dt,
             iterMax=50e3,
-            nout=1e3,
+            nout=5e3,
         );
-
+        @parallel (@idx ni) compute_invariant!(stokes.ε.II, stokes.ε.xx, stokes.ε.yy, stokes.ε.xy)
         dt = compute_dt(stokes, di, dt_diff) * 0.75
         # ------------------------------
 
-        # Thermal solver ---------------
-        # args_T = (; P=stokes.P)
-        # solve!(
-        #     thermal,
-        #     thermal_bc,
-        #     stokes,
-        #     rheology,
-        #     args_T,
-        #     di,
-        #     dt 
-        # )
-        # ------------------------------
         # Thermal solver ---------------
         args_T = (; P=stokes.P)
         solve!(
@@ -450,22 +439,23 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
         # interpolate fields from particle to grid vertices
         gathering_xvertex!(T_buffer, pT, xvi, particles.coords)
         # gather_temperature_xvertex!(T_buffer, pT, ρCₚp, xvi, particles.coords)
-        @views T_buffer[:, 1]        .= Tmax
-        @views T_buffer[:, end]      .= Tmin
+        # @views T_buffer[:, 1]        .= Tmax
+        @views T_buffer[:, end]      .= 273.0
+        @views thermal.T[:, 1]       .= Tbot
         @views thermal.T[2:end-1, :] .= T_buffer
 
-        # px = particles.coords[1][particles.index][:]./1e3
-        # py = particles.coords[2][particles.index][:]./1e3
-        # ppT = pT[particles.index][:]
+        # ppx = particles.coords[1][particles.index][:]./1e3
+        # ppy = particles.coords[2][particles.index][:]./1e3
         # clr = pPhases[particles.index][:]
-        # scatter(Array(px), Array(py), color=Array(clr))
+        # scatter(Array(ppx), Array(ppy), color=Array(clr))
+        # # ppT = pT[particles.index][:]
         # scatter(Array(px), Array(py), color=Array(ppT))
 
         @show it += 1
         t += dt
 
         # Plotting ---------------------
-        if it == 1 || rem(it, 1) == 0
+        if it == 1 || rem(it, 10) == 0
             fig = Figure(resolution = (1000, 1600), title = "t = $t")
             ax1 = Axis(fig[1,1], aspect = ar, title = "T [K]  (t=$(t/(1e6 * 3600 * 24 *365.25)) Myrs)")
             ax2 = Axis(fig[2,1], aspect = ar, title = "Vy [m/s]")
@@ -475,10 +465,11 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
             ax4 = Axis(fig[4,1], aspect = ar, title = "log10(η)")
             h1 = heatmap!(ax1, xvi[1].*1e-3, xvi[2].*1e-3, Array(thermal.T[2:end-1,:]) , colormap=:batlow)
             h2 = heatmap!(ax2, xci[1].*1e-3, xvi[2].*1e-3, Array(stokes.V.Vy[2:end-1,:]) , colormap=:batlow)
+            # h2 = scatter!(ax2, Array(ppx), Array(ppy), color=Array(clr))
             h3 = heatmap!(ax3, xci[1].*1e-3, xci[2].*1e-3, Array(stokes.τ.II.*1e-6) , colormap=:batlow) 
+            # h3 = heatmap!(ax3, xci[1].*1e-3, xci[2].*1e-3, Array(log10.(stokes.ε.II)) , colormap=:batlow) 
             # # h3 = heatmap!(ax3, xci[1].*1e-3, xci[2].*1e-3, Array(log10.(abs.(stokes.ε.xx))) , colormap=:batlow) 
-            # h3 = scatter!(ax3, Array(px), Array(py), color=Array(ppT))
-            h4 = heatmap!(ax4, xci[1].*1e-3, xci[2].*1e-3, Array(log10.(η_vep)) , colormap=:batlow)
+            h4 = heatmap!(ax4, xci[1].*1e-3, xci[2].*1e-3, Array(log10.(η)) , colormap=:batlow)
             # h4 = heatmap!(ax4, xci[1].*1e-3, xci[2].*1e-3, Array(abs.(ρg[2]./9.81)) , colormap=:batlow)
             # h4 = heatmap!(ax4, xci[1].*1e-3, xci[2].*1e-3, Array(@.(stokes.P * friction  + cohesion - stokes.τ.II)/1e6) , colormap=:batlow)
             hidexdecorations!(ax1)
@@ -488,8 +479,8 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
             Colorbar(fig[2,2], h2) #, height=100)
             Colorbar(fig[3,2], h3) #, height=100)
             Colorbar(fig[4,2], h4) #, height=100)
-            save( joinpath(figdir, "$(it).png"), fig)
             fig
+            save( joinpath(figdir, "$(it).png"), fig)
         end
         # ------------------------------
 
@@ -501,7 +492,7 @@ end
 function run()
     figdir = "Plume2D"
     ar     = 2 # aspect ratio
-    n      = 128
+    n      = 64
     nx     = n*ar - 2
     ny     = n - 2
 
@@ -509,3 +500,9 @@ function run()
 end
 
 run()
+
+# F = @. 30e6 + stokes.P*sind(30)
+
+# τxx, τyy, τxyv=stokes.τ.xx,stokes.τ.yy,stokes.τ.xy
+
+# τ
