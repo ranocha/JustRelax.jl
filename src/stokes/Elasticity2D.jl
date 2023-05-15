@@ -308,7 +308,6 @@ end
     return nothing
 end
 
-
 @inline isplastic(x::AbstractPlasticity) = true
 @inline isplastic(x) = false
 @inline plastic_params(v) = plastic_params(v.CompositeRheology[1].elements)

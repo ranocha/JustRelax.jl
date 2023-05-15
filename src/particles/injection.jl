@@ -239,15 +239,15 @@ function _inject_particles_phase!(
     first_cell_index(i) = (i - 1) * max_xcell + 1
     # --------------------------------------------
 
-    @inbounds if inject[idx_cell...]
+    if inject[idx_cell...]
         # count current number of particles inside the cell
         particles_num = false
         for i in 1:max_xcell
             particles_num += index[i, idx_cell...]
         end
-        if particles_num == 0
-            CUDA.@cushow particles_num
-        end
+        # if particles_num == 0
+        #     CUDA.@cushow particles_num
+        # end
         # coordinates of the lower-left center
         xvi = corner_coordinate(grid, idx_cell)
 
@@ -259,11 +259,12 @@ function _inject_particles_phase!(
                 p_new = new_particle(xvi, dxi)
 
                 # add phase to new particle
-                idx_min = index_min_distance(coords, p_new, i, idx_cell...)
-                # CUDA.@cushow idx_min, d
-                # CUDA.@cushow idx_cell
-                # CUDA.@cushow particles_phases[i, idx_cell...], particles_phases[idx_min, idx_cell...]
-                particles_phases[i, idx_cell...] = particles_phases[idx_min, idx_cell...]
+                # idx_min = index_min_distance(coords, p_new, i, idx_cell...)
+                # particles_phases[i, idx_cell...] = particles_phases[idx_min, idx_cell...]
+                particle_idx, i_idx, j_idx = index_min_distance(coords, p_new, index, i, idx_cell...)
+                new_phase = particles_phases[particle_idx, i_idx, j_idx]
+                # @show i_idx, j_idx, new_phase
+                particles_phases[i, idx_cell...] = new_phase
 
                 fill_particle!(coords, p_new, i, idx_cell)
                 index[i, idx_cell...] = true
@@ -284,41 +285,66 @@ function _inject_particles_phase!(
         end
     end
 
-    inject[idx_cell...] = false
+    # inject[idx_cell...] = false
 
     return nothing
 end
 
 @inline distance(x, y) = sqrt((x[1]-y[1])^2 + (x[2]-y[2])^2)
 
-function index_min_distance(coords, pn, current_cell, idx_cell::Vararg{Int, N}) where N
-    # function argsmin_distance(coords, pn, current_cell, idx_cell::Vararg{Int, N}) where N
-    idx_min = 0
+# function index_min_distance(coords, pn, current_cell, idx_cell::Vararg{Int, N}) where N
+#     idx_min = 0
+#     dist_min = Inf
+#     px, py = coords
+#     for ip in axes(px, 1)
+#         ip==current_cell && continue
+#         isnan(px[ip, idx_cell...]) && continue
+#         pxi = px[ip, idx_cell...], py[ip, idx_cell...]
+#         d = distance(pxi, pn)
+#         if d < dist_min
+#             idx_min = ip
+#             dist_min = d
+#         end
+#     end
+
+#     idx_min
+# end
+
+function index_min_distance(coords, pn, index, current_cell, icell, jcell)
+    particle_idx_min = i_idx_min = j_idx_min =  0
     dist_min = Inf
     px, py = coords
-    for ip in axes(px, 1)
-        ip==current_cell && continue
-        isnan(px[ip, idx_cell...]) && continue
-        pxi = px[ip, idx_cell...], py[ip, idx_cell...]
+    nx, ny = size(px, 2), size(px, 3)    
+    for j in jcell-1:jcell+1, i in icell-1:icell+1, ip in axes(px, 1)
+        
+        # early escape conditions
+        ((i < 1) || (j < 1)) && continue # out of the domain
+        ((i > nx) || (j > ny)) && continue # out of the domain
+        (i == icell) && (j == jcell) && (ip==current_cell) && continue # current injected particle
+        !(index[ip, i, j]) && continue
+
+        # distance from new point to the existing particle        
+        pxi = px[ip, i, j], py[ip, i, j]
         d = distance(pxi, pn)
+
         if d < dist_min
-            idx_min = ip
+            particle_idx_min = ip
+            i_idx_min = i
+            j_idx_min = j
             dist_min = d
         end
     end
 
-    idx_min
+    particle_idx_min, i_idx_min, j_idx_min
 end
 
-cell_field(field, i, j) = field[i, j], field[i+1, j], field[i, j+1], field[i+1, j+1]
+
+@inline cell_field(field, i, j) = field[i, j], field[i+1, j], field[i, j+1], field[i+1, j+1]
 
 function new_particle(xvi::NTuple{N,T}, dxi::NTuple{N,T}) where {N,T}
     
-    f() = rand(-1:2:1) * rand() * 0.25
-
     p_new = ntuple(Val(N)) do i
-        # xvi[i] + dxi[i] * 0.5 * (1.0 + f())
-        xvi[i] + dxi[i] * rand()
+        xvi[i] + dxi[i] * rand(0.05:1e-5: 0.95)
     end
 
     return p_new

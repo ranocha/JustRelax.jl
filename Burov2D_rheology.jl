@@ -1,15 +1,33 @@
 # from "Fingerprinting secondary mantle plumes", Cloetingh et al. 2022
 
 function init_rheologies(; is_plastic = true)
-    disl_upper_crust            = DislocationCreep(A=10^-15.0 , n=2.0, E=476e3, V=0.0  ,  r=0.0, R=8.3145)
-    disl_lower_crust            = DislocationCreep(A=2.06e-23 , n=3.2, E=238e3, V=0.0  ,  r=0.0, R=8.3145)
-    disl_lithospheric_mantle    = DislocationCreep(A=1.1e-16  , n=3.5, E=530e3, V=17e-6,  r=0.0, R=8.3145)
-    disl_sublithospheric_mantle = DislocationCreep(A=1.1e-16  , n=3.5, E=530e3, V=20e-6,  r=0.0, R=8.3145)
-    diff_lithospheric_mantle    = DiffusionCreep(A=2.46e-16   , n=1.0, E=375e3, V=10e-6,  r=0.0, R=8.3145)
-    diff_sublithospheric_mantle = DiffusionCreep(A=2.46e-16   , n=1.0, E=375e3, V=10e-6,  r=0.0, R=8.3145)
+    # shit from Sird
+    # disl_upper_crust            = DislocationCreep(A=10^-15.0 , n=2.0, E=476e3, V=0.0  ,  r=0.0, R=8.3145)
+    # disl_lower_crust            = DislocationCreep(A=2.06e-23 , n=3.2, E=238e3, V=0.0  ,  r=0.0, R=8.3145)
+    # disl_lithospheric_mantle    = DislocationCreep(A=1.1e-16  , n=3.5, E=530e3, V=17e-6,  r=0.0, R=8.3145)
+    # disl_sublithospheric_mantle = DislocationCreep(A=1.1e-16  , n=3.5, E=530e3, V=20e-6,  r=0.0, R=8.3145)
+    # diff_lithospheric_mantle    = DiffusionCreep(A=2.46e-16   , n=1.0, E=375e3, V=10e-6,  r=0.0, R=8.3145)
+    # diff_sublithospheric_mantle = DiffusionCreep(A=2.46e-16   , n=1.0, E=375e3, V=10e-6,  r=0.0, R=8.3145)
+
+    # Miguelitos
+    disl_upper_crust            = DislocationCreep(A=10^-28.0 , n=4.0, E=223e3, V=0.0  ,  r=0.0, R=8.3145)
+    disl_lower_crust            = DislocationCreep(A=10^-15.40, n=3.0, E=356e3, V=0.0  ,  r=0.0, R=8.3145)
+    disl_lithospheric_mantle    = DislocationCreep(A=10^-15.96, n=3.5, E=530e3, V=13e-6,  r=0.0, R=8.3145)
+    disl_sublithospheric_mantle = DislocationCreep(A=10^-15.81, n=3.5, E=480e3, V=10e-6,  r=0.0, R=8.3145)
+    diff_lithospheric_mantle    = DiffusionCreep(A=10^-8.16, n=1.0, E=375e3, V=6e-6,  r=0.0, R=8.3145)
+    diff_sublithospheric_mantle = DiffusionCreep(A=10^-8.64, n=1.0, E=335e3, V=4e-6,  r=0.0, R=8.3145)
+
+    el_upper_crust              = SetConstantElasticity(; G=36e9, ν=0.5)                             # elastic spring
+    el_lower_crust              = SetConstantElasticity(; G=40e9, ν=0.5)                             # elastic spring
+    el_lithospheric_mantle      = SetConstantElasticity(; G=74e9, ν=0.5)                             # elastic spring
+    el_sublithospheric_mantle   = SetConstantElasticity(; G=74e9, ν=0.5)       
+    β_upper_crust              = inv(get_Kb(el_upper_crust))
+    β_lower_crust              = inv(get_Kb(el_lower_crust))
+    β_lithospheric_mantle      = inv(get_Kb(el_lithospheric_mantle))
+    β_sublithospheric_mantle   = inv(get_Kb(el_sublithospheric_mantle))
 
     # Physical properties using GeoParams ----------------
-    η_reg     = 1e18
+    η_reg     = 1e16
     G0        = 30e9    # shear modulus
     cohesion  = 20e6
     # friction  = asind(0.01)
@@ -25,6 +43,83 @@ function init_rheologies(; is_plastic = true)
         DruckerPrager_regularised(; C = Inf, ϕ=friction, η_vp=η_reg, Ψ=0.0) # non-regularized plasticity
     end
     # pl        = DruckerPrager(; C = 30e6, ϕ=friction, Ψ=0.0) # non-regularized plasticity
+
+
+    # Define rheolgy struct
+    rheology = (
+        # Name              = "UpperCrust",
+        SetMaterialParams(;
+            Phase             = 1,
+            Density           = PT_Density(; ρ0=2.7e3, β=β_upper_crust, T0=0.0, α = 2.5e-5),
+            HeatCapacity      = ConstantHeatCapacity(; cp=7.5e2),
+            Conductivity      = ConstantConductivity(; k=2.7),
+            CompositeRheology = CompositeRheology((disl_upper_crust, el_upper_crust, pl)),
+            Elasticity        = el_upper_crust,
+            Gravity           = ConstantGravity(; g=-9.81),
+        ),
+        # Name              = "LowerCrust",
+        SetMaterialParams(;
+            Phase             = 2,
+            Density           = PT_Density(; ρ0=2.9e3, β=β_lower_crust, T0=0.0, α = 2.5e-5),
+            HeatCapacity      = ConstantHeatCapacity(; cp=7.5e2),
+            Conductivity      = ConstantConductivity(; k=2.7),
+            CompositeRheology = CompositeRheology((disl_lower_crust, el_lower_crust, pl)),
+            Elasticity        = el_lower_crust,
+        ),
+        # Name              = "LithosphericMantle",
+        SetMaterialParams(;
+            Phase             = 3,
+            Density           = PT_Density(; ρ0=3.3e3, β=β_lithospheric_mantle, T0=0.0, α = 3e-5),
+            HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
+            Conductivity      = ConstantConductivity(; k=3.0),
+            CompositeRheology = CompositeRheology((disl_lithospheric_mantle, diff_lithospheric_mantle, el_lithospheric_mantle, pl)),
+            Elasticity        = el_lithospheric_mantle,
+        ),
+        # Name              = "SubLithosphericMantle",
+        SetMaterialParams(;
+            Phase             = 4,
+            Density           = PT_Density(; ρ0=3.4e3, β=β_sublithospheric_mantle, T0=0.0, α = 3e-5),
+            HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
+            Conductivity      = ConstantConductivity(; k=3.3),
+            CompositeRheology = CompositeRheology((disl_sublithospheric_mantle, diff_sublithospheric_mantle, el_sublithospheric_mantle)),
+            Elasticity        = el_sublithospheric_mantle,
+        ),
+        # Name              = "Plume",
+        SetMaterialParams(;
+            Phase             = 5,
+            Density           = PT_Density(; ρ0=3.4e3-25, β=β_sublithospheric_mantle, T0=0.0, α = 3e-5),
+            HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
+            Conductivity      = ConstantConductivity(; k=3.3),
+            CompositeRheology = CompositeRheology((disl_sublithospheric_mantle, diff_sublithospheric_mantle, el_sublithospheric_mantle)),
+            Elasticity        = el_sublithospheric_mantle,
+        ),
+        # Name              = "StickyAir",
+        SetMaterialParams(;
+            Phase             = 6,
+            Density           = ConstantDensity(; ρ=2e3),
+            HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
+            Conductivity      = ConstantConductivity(; k=15.0),
+            CompositeRheology = CompositeRheology((LinearViscous(; η=1e21),)),
+            # Elasticity        = SetConstantElasticity(; G=Inf, ν=0.5) ,
+        ),
+    )
+end
+
+function init_rheologies_isoviscous()
+    disl_upper_crust            = LinearViscous(; η=1e21)
+    disl_lower_crust            = LinearViscous(; η=1e21)
+    disl_lithospheric_mantle    = LinearViscous(; η=1e21)
+    disl_sublithospheric_mantle = LinearViscous(; η=1e21)
+    diff_lithospheric_mantle    = LinearViscous(; η=1e21)
+    diff_sublithospheric_mantle = LinearViscous(; η=1e21)
+
+    # Physical properties using GeoParams ----------------
+    η_reg     = 1e18
+    G0        = 30e9    # shear modulus
+    cohesion  = 20e6
+    # friction  = asind(0.01)
+    friction  = 20.0
+    pl        = DruckerPrager_regularised(; C = cohesion, ϕ=friction, η_vp=η_reg, Ψ=0.0) # non-regularized plasticity
     el        = SetConstantElasticity(; G=G0, ν=0.5)                             # elastic spring
     β         = inv(get_Kb(el))
 
@@ -70,7 +165,7 @@ function init_rheologies(; is_plastic = true)
         # Name              = "Plume",
         SetMaterialParams(;
             Phase             = 5,
-            Density           = PT_Density(; ρ0=3.4e3+25, β=β, T0=0.0, α = 3e-5),
+            Density           = PT_Density(; ρ0=3.4e3-25, β=β, T0=0.0, α = 3e-5),
             HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
             Conductivity      = ConstantConductivity(; k=3.3),
             CompositeRheology = CompositeRheology((disl_sublithospheric_mantle, diff_sublithospheric_mantle, )),
@@ -88,7 +183,7 @@ function init_rheologies(; is_plastic = true)
     )
 end
 
-function init_phases!(phases, particles::Particles, Lx; r=50e3)
+function init_phases!(phases, particles::Particles, Lx; d=650e3, r=50e3)
     ni = size(phases, 2), size(phases, 3)
 
     @parallel_indices (i, j) function init_phases!(phases, px, py, index, r, Lx)
@@ -97,7 +192,7 @@ function init_phases!(phases, particles::Particles, Lx; r=50e3)
             index[ip, i, j] == 0 && continue
 
             x = px[ip, i, j]
-            depth = -py[ip, i, j]        
+            depth = -py[ip, i, j] #- 45e3 
             if 0e0 ≤ depth ≤ 20e3
                 phases[ip, i, j] = 1
 
@@ -116,7 +211,7 @@ function init_phases!(phases, particles::Particles, Lx; r=50e3)
             end
 
             # plume
-            if (((x - Lx * 0.5))^2 + ((depth - 650e3))^2) ≤ r^2
+            if (((x - Lx * 0.5))^2 + ((depth - d))^2) ≤ r^2
                 phases[ip, i, j] = 5
             end
         end

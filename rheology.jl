@@ -132,3 +132,28 @@ ax1.ylabel = "deepth (km)"
 # axislegend(ax2, position=:lb)
 f
 
+
+
+rheology = (
+    SetMaterialParams(;
+        Phase             = 1,
+        CompositeRheology = CompositeRheology((LinearViscous(;η=1e21), ))
+    ),
+    SetMaterialParams(;
+        Phase             = 2,
+        CompositeRheology = CompositeRheology((LinearViscous(;η=1e22), ))
+    ),
+)
+    
+ni=32, 32
+phases = CuArray(rand(1:2, ni...))
+η = @rand(ni...)
+
+@parallel_indices (i, j) function init_Viscosity!(η, Phases, rheology)
+    @inbounds η[i, j] = GeoParams.nphase(get_viscosity, Phases[i, j], rheology)
+    return nothing
+end
+
+get_viscosity(v)=v.CompositeRheology[1][1].η.val
+
+@parallel (@idx ni) init_Viscosity!(η, phases, rheology)
