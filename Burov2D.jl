@@ -11,7 +11,7 @@ model = PS_Setup(:gpu, Float64, 2)
 # model = PS_Setup(:cpu, Float64, 2)
 environment!(model)
 
-using Printf, LinearAlgebra, GeoParams, GLMakie, SpecialFunctions
+using Printf, LinearAlgebra, GeoParams, GLMakie, SpecialFunctions, CellArrays
 
 # PARTICLES #################################################
 using MuladdMacro
@@ -42,12 +42,12 @@ include("Burov2D_rheology.jl")
 @inline init_particle_fields(particles) = @zeros(size(particles.coords[1])...) 
 @inline init_particle_fields(particles, nfields) = tuple([zeros(particles.coords[1]) for i in 1:nfields]...)
 @inline init_particle_fields(particles, ::Val{N}) where N = ntuple(_ -> @zeros(size(particles.coords[1])...) , Val(N))
+@inline init_particle_fields_cellarrays(particles, ::Val{N}) where N = ntuple(_ -> @fill(0.0, size(particles.coords[1])..., celldims=(cellsize(particles.index))), Val(N))
 
-function init_particles_cellarrays(nxcell, max_xcell, min_xcell, x, y, dx, dy, nx, ny)
+function init_particles(nxcell, max_xcell, min_xcell, x, y, dx, dy, nx, ny)
     ncells = nx * ny
     np = max_xcell * ncells
     px, py = ntuple(_ -> fill(NaN, max_xcell, nx, ny), Val(2))
-    px, py = ntuple(_ -> @fill(NaN, ni..., celldims=(max_xcell,)) , Val(2))
     # min_xcell = ceil(Int, nxcell / 2)
     # min_xcell = 4
 
@@ -113,6 +113,7 @@ end
 
 
 function init_particles_cellarrays(nxcell, max_xcell, min_xcell, x, y, dx, dy, nx, ny)
+    ni = nx, ny
     ncells = nx * ny
     np = max_xcell * ncells
     px, py = ntuple(_ -> @fill(NaN, ni..., celldims=(max_xcell,)) , Val(2))
@@ -120,15 +121,14 @@ function init_particles_cellarrays(nxcell, max_xcell, min_xcell, x, y, dx, dy, n
     inject = @fill(false, nx, ny, eltype=Bool)
     index = @fill(false, ni..., celldims=(max_xcell,), eltype=Bool) 
     
-
     @parallel_indices (i, j) function fill_coords_index(px, py, index)    
         # lower-left corner of the cell
         x0, y0 = x[i], y[j]
         # fill index array
         for l in 1:nxcell
-            px[l, i, j] = x0 + dx * rand(0.05:1e-5: 0.95)
-            py[l, i, j] = y0 + dy * rand(0.05:1e-5: 0.95)
-            index[l, i, j] = true
+            @cell px[l, i, j] = x0 + dx * rand(0.05:1e-5: 0.95)
+            @cell py[l, i, j] = y0 + dy * rand(0.05:1e-5: 0.95)
+            @cell index[l, i, j] = true
         end
         return nothing
     end
@@ -140,10 +140,6 @@ function init_particles_cellarrays(nxcell, max_xcell, min_xcell, x, y, dx, dy, n
     )
 end
 
-particles = init_particles_cellarrays(
-    nxcell, max_xcell, min_xcell, xvi[1], xvi[2], di[1], di[2], nx, ny
-)
-
 function velocity_grids(xci, xvi, di)
     dx, dy = di
     yVx = [xci[2][1] - dx; collect(xci[2]); xci[2][end] + dx]
@@ -152,8 +148,8 @@ function velocity_grids(xci, xvi, di)
     grid_vx = (CuArray(collect(xvi[1])), CuArray(yVx))
     grid_vy = (CuArray(xVy), CuArray(collect(xvi[2])))
 
-    # grid_vx = ((collect(xvi[1])), (yVx))
-    # grid_vy = ((xVy), (collect(xvi[2])))
+    # grid_vx = (collect(xvi[1])), yVx
+    # grid_vy = xVy, (collect(xvi[2]))
 
     return grid_vx, grid_vy
 end
@@ -170,7 +166,7 @@ end
         args_ij       = (; dt = args.dt, P = (args.P[i, j]), depth = abs(args.depth[j]), T=av(args.T), τII_old=0.0)
         εij_p         = 1.0, 1.0, (1.0, 1.0, 1.0, 1.0)
         τij_p_o       = 0.0, 0.0, (0.0, 0.0, 0.0, 0.0)
-        phases        = 1, 1, (1,1,1,1) # for now hard-coded for a single phase
+        phases        = 1, 1, (1, 1, 1, 1) # for now hard-coded for a single phase
         # # update stress and effective viscosity
         _, _, η[i, j] = compute_τij(MatParam, εij_p, args_ij, τij_p_o, phases)
     end
@@ -230,9 +226,10 @@ end
    
     εII_0 = (εxx[i, j] == 0 && εyy[i, j] == 0) ? 1e-15 : 0.0
     @inbounds begin
-        ratio_ij      = ratios_center[i,j]
-        args_ij       = (; dt = args.dt, P = (args.P[i, j]), depth = abs(args.depth[j]), T=av(args.T), τII_old=0.0)
+        ratio_ij      = ratios_center[i, j]
+        args_ij       = (; dt = args.dt, P = (args.P[i, j]),  T=av(args.T), τII_old=0.0)
         εij_p         = εII_0 + εxx[i, j], -εII_0 + εyy[i, j], gather(εxyv)
+        second_invariant_staggered(εij_p...)
         τij_p_o       = 0.0, 0.0, (0.0, 0.0, 0.0, 0.0)
         # update stress and effective viscosity
         _, _, ηi = compute_τij_ratio(MatParam, ratio_ij, εij_p, args_ij, τij_p_o)
@@ -241,6 +238,9 @@ end
     
     return nothing
 end
+
+# ratios_center, εxx, εyy, εxyv, args, MatParam = phase_ratios.center, stokes.ε.xx, stokes.ε.yy, stokes.ε.xy, args_ηv, rheology;
+# @parallel (@idx ni) compute_viscosity!(η, phase_ratios.center, stokes.ε.xx, stokes.ε.yy, stokes.ε.xy, args_ηv, rheology)
 
 import ParallelStencil.INDICES
 const idx_j = INDICES[2]
@@ -362,13 +362,14 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     # Elliptical temperature anomaly 
     δT          = 150.0           # temperature perturbation    
     xc_anomaly  = 0.5*lx
-    yc_anomaly  = -525e3  # origin of thermal anomaly
-    r_anomaly   = 50e3            # radius of perturbation
+    yc_anomaly  = -650e3  # origin of thermal anomaly
+    r_anomaly   = 100e3            # radius of perturbation
     elliptical_perturbation!(thermal.T, δT, xc_anomaly, yc_anomaly, r_anomaly, xvi)
     @views thermal.T[:, end] .= Tmin
     # @views thermal.T[:, 1]   .= Tmax
     # Tmax = thermal.T[1,1]
-    Tbot = thermal.T[1, 1]
+    # Tbot = thermal.T[1, 1]
+    Tbot = thermal.T[:, 1]
     # Tbot = Tmax
     # ----------------------------------------------------
 
@@ -387,11 +388,8 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
     # velocity grids
     grid_vx, grid_vy = velocity_grids(xci, xvi, di)
     # temperature
-    pT, ρCₚp, pPhases = init_particle_fields(particles, Val(3))
+    pT, pPhases = init_particle_fields_cellarrays(particles, Val(3))
     particle_args = (pT, pPhases)
-    # ρCp = @fill(ρg[2][1]/9.81*1200, ni.+1...)
-    # grid2particle_xvertex!(ρCₚp, xvi, ρCp, particles.coords) 
-    # particle_args = (pT, ρCₚp, pPhases)
 
     # from "Fingerprinting secondary mantle plumes", Cloetingh et al. 2022
     init_phases!(pPhases, particles, lx; d=abs(yc_anomaly), r=r_anomaly)
@@ -474,7 +472,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
             (rheology, rheology_pl),
             # it > 5 ? rheology_pl : rheology,
             dt,
-            iterMax=150e3,
+            iterMax=50e3,
             nout=1e3,
         );
         @parallel (@idx ni) compute_invariant!(stokes.ε.II, stokes.ε.xx, stokes.ε.yy, stokes.ε.xy)
@@ -499,7 +497,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
         T_buffer .= deepcopy(thermal.T[2:end-1, :])
         grid2particle_xvertex!(pT, xvi, T_buffer, particles.coords)
         # advect particles in space
-        V = (stokes.V.Vx, stokes.V.Vy)
+        V = stokes.V.Vx, stokes.V.Vy
         advection_RK2!(particles, V, grid_vx, grid_vy, dt, 2 / 3)
         # advect particles in memory
         shuffle_particles_vertex!(particles, xvi, particle_args)
@@ -512,23 +510,24 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
         # interpolate fields from particle to grid vertices
         gathering_xvertex!(T_buffer, pT, xvi, particles.coords)
         # gather_temperature_xvertex!(T_buffer, pT, ρCₚp, xvi, particles.coords)
-        # @views T_buffer[:, 1]        .= Tmax
         @views T_buffer[:, end]      .= 273.0
         @views thermal.T[:, 1]       .= Tbot
         @views thermal.T[2:end-1, :] .= T_buffer
-
-        ppx = particles.coords[1][particles.index][:]./1e3
-        ppy = particles.coords[2][particles.index][:]./1e3
-        clr = pPhases[particles.index][:]
-        # scatter(Array(ppx), Array(ppy), color=Array(clr))
-        # ppT = pT[particles.index][:]
-        # scatter(Array(ppx), Array(ppy), color=Array(ppT))
-
+        
         @show it += 1
         t += dt
 
         # Plotting ---------------------
         if it == 1 || rem(it, 5) == 0
+
+            p = particles.coords
+            ppx, ppy = p
+            pxv = ppx.data[:]./1e3
+            pyv = ppy.data[:]./1e3
+            clr = pPhases.data[:]
+            # ppT = pT.data[:]
+            idxv = particles.index.data[:]
+
             fig = Figure(resolution = (1000, 1600), title = "t = $t")
             ax1 = Axis(fig[1,1], aspect = ar, title = "T [K]  (t=$(t/(1e6 * 3600 * 24 *365.25)) Myrs)")
             ax2 = Axis(fig[2,1], aspect = ar, title = "Vy [m/s]")
@@ -539,8 +538,7 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
             # h1 = heatmap!(ax1, xvi[1].*1e-3, xvi[2].*1e-3, Array(thermal.T[2:end-1,:]) , colormap=:batlow)
             h1 = heatmap!(ax1, xvi[1].*1e-3, xvi[2].*1e-3, Array(abs.(ρg[2]./9.81)) , colormap=:batlow)
             # h2 = heatmap!(ax2, xci[1].*1e-3, xvi[2].*1e-3, Array(stokes.V.Vy[2:end-1,:]) , colormap=:batlow)
-            # h2 = heatmap!(ax2, xci[1].*1e-3, xvi[2].*1e-3, Array(stokes.V.Vx[2:end-1,:]) , colormap=:batlow)
-            h2 = scatter!(ax2, Array(ppx), Array(ppy), color=Array(clr))
+            h2 = scatter!(ax2, Array(pxv[idxv]), Array(pyv[idxv]), color=Array(clr[idxv]))
             # h3 = heatmap!(ax3, xci[1].*1e-3, xci[2].*1e-3, Array(stokes.τ.II.*1e-6) , colormap=:batlow) 
             h3 = heatmap!(ax3, xci[1].*1e-3, xci[2].*1e-3, Array(log10.(stokes.ε.II)) , colormap=:batlow) 
             # # h3 = heatmap!(ax3, xci[1].*1e-3, xci[2].*1e-3, Array(log10.(abs.(stokes.ε.xx))) , colormap=:batlow) 
@@ -554,24 +552,39 @@ function thermal_convection2D(; ar=8, ny=16, nx=ny*8, figdir="figs2D")
             Colorbar(fig[2,2], h2) #, height=100)
             Colorbar(fig[3,2], h3) #, height=100)
             Colorbar(fig[4,2], h4) #, height=100)
-            fig
             save( joinpath(figdir, "$(it).png"), fig)
+            fig
         end
         # ------------------------------
 
     end
 
-    return (ni=ni, xci=xci, li=li, di=di), thermal
+    # return (ni=ni, xci=xci, li=li, di=di), thermal
+    return nothing
 end
 
 function run()
     figdir = "Plume2D"
     ar     = 2 # aspect ratio
-    n      = 64
+    n      = 128
     nx     = n*ar - 2
     ny     = n - 2
 
     thermal_convection2D(; figdir=figdir, ar=ar,nx=nx, ny=ny);
 end
 
-# run()
+run()
+
+# p = particles.coords
+# ppx, ppy = p
+# pxv = ppx.data[:]./1e3
+# pyv = ppy.data[:]./1e3
+# ppT = pT.data[:]
+# clr = pPhases.data[:]
+# idxv = particles.index.data[:]
+
+# scatter(Array(ppT[idxv]), Array(pyv[idxv])./1e3)
+# scatter(Array(pxv[idxv]), Array(pyv[idxv]), color=Array(clr[idxv]))
+
+
+# j = 8

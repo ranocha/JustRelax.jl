@@ -179,29 +179,26 @@ function __shuffle_particles_vertex!(
     @inbounds if indomain(idx_child, nxi)
 
         # iterate over particles in child cell 
-        for ip in axes(index, 1)
+        for ip in cellaxes(index)
 
             p_child = cache_particle(particle_coords, ip, idx_child)
 
             # particle went of of the domain, get rid of it
             if !(indomain(p_child, domain_limits))
-                index[ip, idx_child...] = false
+                @cell index[ip, idx_child...] = false
                 empty_particle!(particle_coords, ip, idx_child)
                 empty_particle!(args, ip, idx_child)
             end
 
-            if index[ip, idx_child...] # true if memory allocation is filled with a particle
-
+            if @cell index[ip, idx_child...] # true if memory allocation is filled with a particle
                 # check whether the incoming particle is inside the cell and move it
                 if isincell(p_child, corner_xi, dxi) && !isparticleempty(p_child)
-                    # CUDA.@cuprintln("hello there")
-
                     # hold particle variables
                     current_p = p_child
                     current_args = cache_args(args, ip, idx_child)
 
                     # remove particle from child cell
-                    index[ip, idx_child...] = false
+                    @cell index[ip, idx_child...] = false
                     empty_particle!(particle_coords, ip, idx_child)
                     empty_particle!(args, ip, idx_child)
 
@@ -210,21 +207,21 @@ function __shuffle_particles_vertex!(
                     free_idx == 0 && continue
                     
                     # move particle and its fields to the first free memory location
-                    index[free_idx, parent_cell...] = true
+                    @cell index[free_idx, parent_cell...] = true
 
                     fill_particle!(particle_coords, current_p, free_idx, parent_cell)
                     fill_particle!(args, current_args, free_idx, parent_cell)
                 end
-
             end
+
         end
 
     end
 end
 
 function find_free_memory(index, I::Vararg{Int64, N}) where {N}
-    for i in axes(index, 1)
-        @inbounds index[i, I...] == 0 && return i
+    for i in cellaxes(index)
+        !(@cell(index[i, I...])) && return i
     end
     return 0
 end
@@ -258,12 +255,14 @@ end
 end
 
 @inline function cache_args(args::NTuple{N1,T}, ip, I::NTuple{N2,Int64}) where {T,N1,N2}
-    return ntuple(i -> @inbounds(args[i][ip, I...]), Val(N1))
+    # return ntuple(i -> @inbounds(args[i][ip, I...]), Val(N1))
+    return ntuple(Val(N1)) do i
+        tmp = args[i] 
+        @cell(tmp[ip, I...])
+    end
 end
 
-function cache_particle(p::NTuple{N1,T}, ip, I::NTuple{N2,Int64}) where {T,N1,N2}
-    return cache_args(p, ip, I)
-end
+cache_particle(p::NTuple{N1,T}, ip, I::NTuple{N2,Int64}) where {T,N1,N2} = cache_args(p, ip, I)
 
 @inline function child_index(parent_cell::NTuple{N,Int64}, I::NTuple{N,Int64}) where {N}
     return ntuple(i -> parent_cell[i] + I[i], Val(N))
@@ -272,7 +271,11 @@ end
 @generated function empty_particle!(p::NTuple{N1,T}, ip, I::NTuple{N2,Int64}) where {N1, N2, T}
     quote
         Base.@_inline_meta
-        Base.Cartesian.@nexprs $N1 i -> @inbounds p[i][ip, I...] = NaN
+        Base.Cartesian.@nexprs $N1 i -> (
+            tmp=p[i]; 
+            (@cell tmp[ip, I...]=NaN);
+        )
+        # Base.Cartesian.@nexprs $N1 i -> @inbounds p[i][ip, I...] = NaN
     end
 end
 
@@ -281,20 +284,22 @@ end
 ) where {N1,N2,T1,T2}
     quote
         Base.@_inline_meta
-        Base.Cartesian.@nexprs $N1 i -> p[i][ip, I...] = field[i]
+        Base.Cartesian.@nexprs $N1 i -> (
+            tmp=p[i]; 
+            (@cell tmp[ip, I...] = field[i])
+        )
+        # Base.Cartesian.@nexprs $N1 i -> p[i][ip, I...] = field[i]
     end
 end
 
 function clean_particles!(particles::Particles, grid::NTuple{2,T}, args) where {T}
     # unpack
     (; coords, index) = particles
-    nxi = length.(grid)
-    nx, ny = nxi
     
     # px, py = particle_coords
     dxi = compute_dx(grid)
 
-    @parallel (1:size(index,2), 1:size(index, 3)) _clean!(
+    @parallel (1:size(index, 1), 1:size(index, 2)) _clean!(
         coords, grid, dxi, index, args
     )
 
@@ -304,14 +309,14 @@ end
 @parallel_indices (i, j) function _clean!(particle_coords, grid, dxi, index, args)
     corner_xi = corner_coordinate(grid, (i, j))
     # iterate over particles in child cell 
-    for ip in axes(index, 1)
+    for ip in cellaxes(index)
 
-        pi = cache_particle(particle_coords, ip,  (i, j))
+        pᵢ = cache_particle(particle_coords, ip,  (i, j))
 
-        if index[ip, i, j] # true if memory allocation is filled with a particle
-            if !(isincell(pi, corner_xi, dxi))
+        if @cell index[ip, i, j] # true if memory allocation is filled with a particle
+            if !(isincell(pᵢ, corner_xi, dxi))
                 # remove particle from child cell
-                index[ip, i, j] = false
+                @cell index[ip, i, j] = false
                 empty_particle!(particle_coords, ip,  (i, j))
                 empty_particle!(args, ip,  (i, j))
             end

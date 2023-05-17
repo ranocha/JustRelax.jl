@@ -87,7 +87,7 @@ function init_rheologies(; is_plastic = true)
         # Name              = "Plume",
         SetMaterialParams(;
             Phase             = 5,
-            Density           = PT_Density(; ρ0=3.4e3-25, β=β_sublithospheric_mantle, T0=0.0, α = 3e-5),
+            Density           = PT_Density(; ρ0=3.4e3-50, β=β_sublithospheric_mantle, T0=0.0, α = 3e-5),
             HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
             Conductivity      = ConstantConductivity(; k=3.3),
             CompositeRheology = CompositeRheology((disl_sublithospheric_mantle, diff_sublithospheric_mantle, el_sublithospheric_mantle)),
@@ -184,41 +184,41 @@ function init_rheologies_isoviscous()
 end
 
 function init_phases!(phases, particles::Particles, Lx; d=650e3, r=50e3)
-    ni = size(phases, 2), size(phases, 3)
+    ni = size(phases, 1), size(phases, 2)
 
     @parallel_indices (i, j) function init_phases!(phases, px, py, index, r, Lx)
-        @inbounds for ip in axes(phases,1)
+        @inbounds for ip in 1:prod(cellsize(phases))
             # quick escape
-            index[ip, i, j] == 0 && continue
+            @cell(index[ip, i, j]) == 0 && continue
 
-            x = px[ip, i, j]
-            depth = -py[ip, i, j] #- 45e3 
+            x = @cell px[ip, i, j]
+            depth = -(@cell py[ip, i, j]) #- 45e3 
             if 0e0 ≤ depth ≤ 20e3
-                phases[ip, i, j] = 1
+                @cell phases[ip, i, j] = 1.0
 
             elseif 40e3 ≥ depth > 20e3
-                phases[ip, i, j] = 2
+                @cell phases[ip, i, j] = 2.0
 
             elseif 120e3 ≥ depth > 40e3
-                phases[ip, i, j] = 3
+                @cell phases[ip, i, j] = 3.0
 
             elseif depth > 120e3
-                phases[ip, i, j] = 4
+                @cell phases[ip, i, j] = 4.0
 
             elseif 0e0 > depth 
-                phases[ip, i, j] = 6
+                @cell phases[ip, i, j] = 6.0
 
             end
 
             # plume
             if (((x - Lx * 0.5))^2 + ((depth - d))^2) ≤ r^2
-                phases[ip, i, j] = 5
+                @cell phases[ip, i, j] = 5.0
             end
         end
         return nothing
     end
 
-    @parallel (@idx ni) init_phases!(phases, particles.coords[1], particles.coords[2], particles.index, r, Lx)
+    @parallel (@idx ni) init_phases!(phases, particles.coords..., particles.index, r, Lx)
 end
 
 function dirichlet_velocities!(Vx, εbg, xvi, xci)

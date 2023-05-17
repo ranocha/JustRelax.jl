@@ -58,6 +58,9 @@ function environment!(model::PS_Setup{T,N}) where {T,N}
         include(joinpath(@__DIR__, "stokes/Stokes.jl"))
         export stress
 
+        include(joinpath(@__DIR__, "phases/CallArrays.jl"))
+        export @cell, element, setelement!, cellnum, cellaxes
+
         include(joinpath(@__DIR__, "phases/phases.jl"))
         export PhaseRatio, fn_ratio, phase_ratios_center, setindex!
 

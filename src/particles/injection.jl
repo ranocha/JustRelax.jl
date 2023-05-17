@@ -1,97 +1,8 @@
-# function inject_particles!(particles::Particles, grid, nxi, dxi)
-#     # unpack
-#     (; inject, coords, nxcell, max_xcell) = particles
-#     dx, dy = dxi
-#     px, py = coords
+@inline check_injection(inject::AbstractArray) = count(inject) > 0 # ? true : false
 
-#     # closures 
-#     first_cell_index(i) = (i - 1) * max_xcell + 1
-#     myrand() = (1.0 + (rand()-0.5)*0.25)
-
-#     # linear to cartesian object
-#     i2s = CartesianIndices(nxi.-1)
-
-#     for (cell, injection) in enumerate(inject)
-#         if injection
-#             icell, jcell = i2s[cell].I
-#             xc, yc = corner_coordinate(grid, icell, jcell)
-#             idx = first_cell_index(cell)
-
-#             # add 4 new particles in a 2x2 manner + some small random perturbation
-#             px[idx]   = xc + dx*(1/3)*myrand()
-#             px[idx+1] = xc + dx*(2/3)*myrand()
-#             px[idx+2] = xc + dx*(1/3)*myrand()
-#             px[idx+3] = xc + dx*(2/3)*myrand()
-#             py[idx]   = yc + dy*(1/3)*myrand()
-#             py[idx+1] = yc + dy*(1/3)*myrand()
-#             py[idx+2] = yc + dy*(2/3)*myrand()
-#             py[idx+3] = yc + dy*(2/3)*myrand()
-
-#             for i in idx:(idx+nxcell-1)
-#                 particles.index[i] = true
-#             end
-
-#             inject[cell] = false
-#         end
-#     end
-
-# end
-
-# function inject_particles!(particles::Particles, grid, nxi, dxi)
-#     # unpack
-#     (; inject, coords, index, nxcell, max_xcell) = particles
-#     # linear to cartesian object
-#     i2s = CartesianIndices(nxi .- 1)
-#     ncells = length(inject)
-#     @parallel (1:ncells) inject_particles!(
-#         inject, coords, index, nxcell, max_xcell, grid, dxi, i2s
-#     )
-# end
-
-# @parallel_indices (cell) function inject_particles!(
-#     inject, coords, index, nxcell, max_xcell, grid, dxi, i2s
-# )
-#     if cell ≤ length(inject)
-#         _inject_particles!(inject, coords, index, nxcell, max_xcell, grid, dxi, i2s, cell)
-#     end
-#     return nothing
-# end
-
-# function _inject_particles!(inject, coords, index, nxcell, max_xcell, grid, dxi, i2s, cell)
-#     dx, dy = dxi
-#     # px, py = coords
-
-#     # closures -----------------------------------
-#     first_cell_index(i) = (i - 1) * max_xcell + 1
-#     myrand() = (1.0 + (rand() - 0.5) * 0.25)
-#     # --------------------------------------------
-
-#     if inject[cell]
-#         icell, jcell = i2s[cell].I
-#         xc, yc = corner_coordinate(grid, icell, jcell)
-#         idx = first_cell_index(cell)
-#         # add 4 new particles in a 2x2 manner + some small random perturbation
-#         coords[1][idx] = xc + dx * (1 / 3) * myrand()
-#         coords[1][idx + 1] = xc + dx * (2 / 3) * myrand()
-#         coords[1][idx + 2] = xc + dx * (1 / 3) * myrand()
-#         coords[1][idx + 3] = xc + dx * (2 / 3) * myrand()
-#         coords[2][idx] = yc + dy * (1 / 3) * myrand()
-#         coords[2][idx + 1] = yc + dy * (1 / 3) * myrand()
-#         coords[2][idx + 2] = yc + dy * (2 / 3) * myrand()
-#         coords[2][idx + 3] = yc + dy * (2 / 3) * myrand()
-#         for i in idx:(idx + nxcell - 1)
-#             index[i] = true
-#         end
-#         inject[cell] = false
-#     end
-# end
-
-@inline check_injection(inject::AbstractArray) = sum(inject) > 0 ? true : false
-
-function check_injection(particles::Particles{N,A,B,C,D,E}) where {N,A,B,C,D,E}
+function check_injection(particles::Particles{N, A}) where {N, A}
     (; inject, index, min_xcell) = particles
-    # nx, ny = size(particles.index, 2), size(particles.index, 3)
-    _, nxi... = size(particles.index)
+    nxi = size(index)
     ranges = ntuple(i -> 1:nxi[i], Val(N))
 
     @parallel ranges check_injection!(inject, index, min_xcell)
@@ -99,8 +10,8 @@ function check_injection(particles::Particles{N,A,B,C,D,E}) where {N,A,B,C,D,E}
     return check_injection(particles.inject)
 end
 
-@parallel_indices (icell, jcell) function check_injection!(inject, index, min_xcell)
-    if icell ≤ size(index, 2) && jcell ≤ size(index, 3)
+@parallel_indices (icell, jcell) function check_injection!(inject::AbstractMatrix, index, min_xcell)
+    if icell ≤ size(index, 1) && jcell ≤ size(index, 2)
         inject[icell, jcell] = isemptycell(icell, jcell, index, min_xcell)
     end
     return nothing
@@ -162,7 +73,7 @@ end
 function _inject_particles!(
     inject, args, fields, coords, index, grid, dxi, nxcell, idx_cell
 )
-    max_xcell = size(index, 1)
+    max_xcell = cellnum(index)
 
     # closures -----------------------------------
     first_cell_index(i) = (i - 1) * max_xcell + 1
@@ -209,50 +120,45 @@ end
 
 function inject_particles_phase!(particles::Particles, particles_phases, args, fields, grid::NTuple{2,T}) where {T}
     # unpack
-    (; inject, coords, index, nxcell) = particles
+    (; inject, coords, index, min_xcell) = particles
     # linear to cartesian object
     icell, jcell = size(inject)
     dxi = compute_dx(grid)
 
     @parallel (1:icell, 1:jcell) inject_particles_phase!(
-        inject, particles_phases, args, fields, coords, index, grid, dxi, nxcell
+        inject, particles_phases, args, fields, coords, index, grid, dxi, min_xcell
     )
 end
 
 @parallel_indices (icell, jcell) function inject_particles_phase!(
-    inject, particles_phases, args, fields, coords, index, grid, dxi::NTuple{2,T}, nxcell
+    inject, particles_phases, args, fields, coords, index, grid, dxi::NTuple{2,T}, min_xcell
 ) where {T}
     if (icell ≤ size(inject, 1)) && (jcell ≤ size(inject, 2))
         _inject_particles_phase!(
-            inject, particles_phases, args, fields, coords, index, grid, dxi, nxcell, (icell, jcell)
+            inject, particles_phases, args, fields, coords, index, grid, dxi, min_xcell, (icell, jcell)
         )
     end
     return nothing
 end
 
 function _inject_particles_phase!(
-    inject, particles_phases, args, fields, coords, index, grid, dxi, nxcell, idx_cell
+    inject, particles_phases, args, fields, coords, index, grid, dxi, min_xcell, idx_cell
 )
-    max_xcell = size(index, 1)
-
-    # closures -----------------------------------
-    first_cell_index(i) = (i - 1) * max_xcell + 1
-    # --------------------------------------------
 
     if inject[idx_cell...]
+      
         # count current number of particles inside the cell
+        # particles_num = reduce(+, @cell(index[i, idx_cell...]) for i in cellaxes(index))
         particles_num = false
-        for i in 1:max_xcell
-            particles_num += index[i, idx_cell...]
+        for i in cellaxes(index)
+            particles_num += @cell index[i, idx_cell...]
         end
-        # if particles_num == 0
-        #     CUDA.@cushow particles_num
-        # end
+      
         # coordinates of the lower-left center
         xvi = corner_coordinate(grid, idx_cell)
 
-        for i in 1:max_xcell
-            if !(index[i, idx_cell...])
+        for i in cellaxes(index)
+            if !(@cell(index[i, idx_cell...]))
                 particles_num += 1
 
                 # add at cellcenter + small random perturbation
@@ -262,12 +168,11 @@ function _inject_particles_phase!(
                 # idx_min = index_min_distance(coords, p_new, i, idx_cell...)
                 # particles_phases[i, idx_cell...] = particles_phases[idx_min, idx_cell...]
                 particle_idx, i_idx, j_idx = index_min_distance(coords, p_new, index, i, idx_cell...)
-                new_phase = particles_phases[particle_idx, i_idx, j_idx]
-                # @show i_idx, j_idx, new_phase
-                particles_phases[i, idx_cell...] = new_phase
+                new_phase = @cell particles_phases[particle_idx, i_idx, j_idx]
+                @cell particles_phases[i, idx_cell...] = new_phase
 
                 fill_particle!(coords, p_new, i, idx_cell)
-                index[i, idx_cell...] = true
+                @cell index[i, idx_cell...] = true
 
                 for (arg_i, field_i) in zip(args, fields)
                     local_field = cell_field(field_i, idx_cell...)
@@ -276,21 +181,21 @@ function _inject_particles_phase!(
                     tmp = _grid2particle_xvertex(p_new, grid, dxi, field_i, idx_cell)
                     tmp < lower && (tmp = lower)
                     tmp > upper && (tmp = upper)
-                    arg_i[i, idx_cell...] = tmp
+                    @cell arg_i[i, idx_cell...] = tmp
                     # arg_i[i, idx_cell...] = clamp(tmp, extrema(field_i)...)
                 end
             end
 
-            particles_num == nxcell && break
+            particles_num ≥ min_xcell && break
         end
     end
 
-    # inject[idx_cell...] = false
+    inject[idx_cell...] = false
 
     return nothing
 end
 
-@inline distance(x, y) = sqrt((x[1]-y[1])^2 + (x[2]-y[2])^2)
+@inline distance2(x, y) = mapreduce(x -> (x[1]-x[2])^2, +, zip(x,y)) |> sqrt
 
 # function index_min_distance(coords, pn, current_cell, idx_cell::Vararg{Int, N}) where N
 #     idx_min = 0
@@ -311,20 +216,22 @@ end
 # end
 
 function index_min_distance(coords, pn, index, current_cell, icell, jcell)
+   
     particle_idx_min = i_idx_min = j_idx_min =  0
     dist_min = Inf
     px, py = coords
-    nx, ny = size(px, 2), size(px, 3)    
-    for j in jcell-1:jcell+1, i in icell-1:icell+1, ip in axes(px, 1)
+    nx, ny = size(px, 1), size(px, 2)
+
+    for j in jcell-1:jcell+1, i in icell-1:icell+1, ip in cellaxes(index)
         
         # early escape conditions
         ((i < 1) || (j < 1)) && continue # out of the domain
         ((i > nx) || (j > ny)) && continue # out of the domain
-        (i == icell) && (j == jcell) && (ip==current_cell) && continue # current injected particle
-        !(index[ip, i, j]) && continue
+        (i == icell) && (j == jcell) && (ip == current_cell) && continue # current injected particle
+        !(@cell index[ip, i, j]) && continue
 
         # distance from new point to the existing particle        
-        pxi = px[ip, i, j], py[ip, i, j]
+        pxi = @cell(px[ip, i, j]), @cell(py[ip, i, j])
         d = distance(pxi, pn)
 
         if d < dist_min

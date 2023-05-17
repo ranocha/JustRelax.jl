@@ -48,14 +48,14 @@ function phase_ratios_center(x::CellArray, phases, cell::Vararg{Int, N}) where N
     num_phases = Val(nphases(x))
     # number of active particles in this cell
     _n = 0
-    for j in axes(phases, 1)
-        _n += isinteger(phases[j, cell...]) && phases[j, cell...] != 0
+    for j in cellaxes(phases)
+        _n += isinteger(@cell(phases[j, cell...])) && @cell(phases[j, cell...]) != 0
     end
     _n = inv(_n)
     # compute phase ratios
     ratios = _phase_ratios_center(phases, num_phases, _n, cell...)
     for (i, ratio) in enumerate(ratios)
-        x[i, cell...] = ratio
+        @cell x[i, cell...] = ratio
     end
 end
 
@@ -64,8 +64,8 @@ end
         Base.@_inline_meta
         Base.@nexprs $N1 i -> reps_i = (
             c = 0;
-            for j in axes(phases, 1)
-                c += (phases[j, cell...] == i)
+            for j in 1:prod(cellsize(phases))
+                c += @cell(phases[j, cell...]) == i
             end;
             c * _n
         )

@@ -114,7 +114,8 @@ function advection_RK2!(
         extrema(grid_vy[2])
     )
 
-    _, nx, ny = size(px)
+    nx, ny = size(px)
+    # _, nx, ny = size(px)
     # Need to transpose grid_vy and Vy to reuse interpolation kernels
     grid_vi = grid_vx, grid_vy
     # launch parallel advection kernel
@@ -138,12 +139,14 @@ end
     
     px, py = p
 
-    if icell ≤ size(px, 2) && jcell ≤ size(px, 3) && index[ipart, icell, jcell]
-        pᵢ = (px[ipart, icell, jcell], py[ipart, icell, jcell])
+    if icell ≤ size(px, 1) && jcell ≤ size(px, 2) && @cell index[ipart, icell, jcell]
+        pᵢ = (@cell(px[ipart, icell, jcell]), @cell(py[ipart, icell, jcell]))
         if !any(isnan, pᵢ)
-            px[ipart, icell, jcell], py[ipart, icell, jcell] = _advection_RK2_edges(
-                pᵢ, V, grid, dxi, clamped_limits, dt, (icell, jcell); α=α
+            px_new, py_new = _advection_RK2_edges(
+                pᵢ, V, grid, dxi, clamped_limits, dt, (icell, jcell), α
             )
+            @cell px[ipart, icell, jcell] = px_new
+            @cell py[ipart, icell, jcell] = py_new
         end
     end
 
@@ -174,7 +177,7 @@ end
             )
             if !any(isnan, pᵢ)
                 px[ipart, icell, jcell, kcell], py[ipart, icell, jcell, kcell], pz[ipart, icell, jcell, kcell] = _advection_RK2_edges(
-                    pᵢ, V, grid, dxi, clamped_limits, dt, (icell, jcell, kcell); α=α
+                    pᵢ, V, grid, dxi, clamped_limits, dt, (icell, jcell, kcell), α
                 )
             end
         end
@@ -196,8 +199,8 @@ function _advection_RK2_edges(
     dxi,
     clamped_limits,
     dt,
-    idx::NTuple;
-    α=0.5,
+    idx::NTuple,
+    α,
 ) where {T,N}
     _α = inv(α)
     ValN = Val(N)

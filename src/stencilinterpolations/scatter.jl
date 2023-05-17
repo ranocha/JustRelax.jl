@@ -1,8 +1,8 @@
 ## CPU 2D
-function grid2particle_xvertex!(Fp::Array, xvi, F::Array{T,2}, particle_coords) where {T}
+function grid2particle_xvertex!(Fp, xvi, F::Array{T,2}, particle_coords) where {T}
     dxi = grid_size(xvi)
     nx, ny = length.(xvi)
-    max_xcell = size(particle_coords[1], 1)
+    max_xcell = cellnum(particle_coords[1])
     Threads.@threads for jnode in 1:(ny - 1)
         for inode in 1:(nx - 1)
             _grid2particle_xvertex!(
@@ -25,26 +25,12 @@ function _grid2particle_xvertex(
     return Fp
 end
 
-## CPU 3D
-function grid2particle_xvertex!(Fp::Array, xvi, F::Array{T,3}, particle_coords) where {T}
-    # cell dimensions
-    dxi = grid_size(xvi)
-    nx, ny, nz = length.(xvi)
-    max_xcell = size(particle_coords[1], 1)
-    Threads.@threads for knode in 1:(nz - 1)
-        for jnode in 1:(ny - 1), inode in 1:(nx - 1)
-            _grid2particle_xvertex!(
-                Fp, particle_coords, xvi, dxi, F, max_xcell, (inode, jnode, knode)
-            )
-        end
-    end
-end
 
 function _grid2particle_xvertex!(
-    Fp::Array, p::NTuple, xvi::NTuple, dxi::NTuple, F::Array, max_xcell, idx
+    Fp, p::NTuple, xvi::NTuple, dxi::NTuple, F::Array, max_xcell, idx
 )
     @inline function particle2tuple(ip::Integer, idx::NTuple{N,T}) where {N,T}
-        return ntuple(i -> p[i][ip, idx...], Val(N))
+        return ntuple(i -> @cell(p[i][ip, idx...]), Val(N))
     end
 
     for i in 1:max_xcell
@@ -62,17 +48,18 @@ function _grid2particle_xvertex!(
         ti = normalize_coordinates(p_i, xvi, dxi, idx)
 
         # Interpolate field F onto particle
-        Fp[i, idx...] = ndlinear(ti, Fi)
+        @cell Fp[i, idx...] = ndlinear(ti, Fi)
     end
 end
 
 ## CUDA 2D
 function grid2particle_xvertex!(
-    Fp::CuArray, xvi, F::CuArray{T,2}, particle_coords; nt=512
+    Fp, xvi, F::CuArray{T,2}, particle_coords; nt=512
 ) where {T}
     # cell dimensions
     dxi = grid_size(xvi)
-    max_xcell, ny, nz = size(particle_coords[1])
+    max_xcell = cellnum(particle_coords[1]) 
+    ny, nz = size(particle_coords[1])
     nblocksx = ceil(Int, ny / 32)
     nblocksy = ceil(Int, nz / 32)
     threadsx = 32
@@ -86,22 +73,20 @@ function grid2particle_xvertex!(
 end
 
 function _grid2particle_xvertex!(
-    Fp::CuDeviceArray, p::NTuple, xvi::NTuple, dxi::NTuple{2,T}, F::CuDeviceArray, max_xcell
+    Fp, p::NTuple, xvi::NTuple, dxi::NTuple{2,T}, F::CuDeviceArray, max_xcell
 ) where {T}
+
     @inline function particle2tuple(ip::Integer, idx::NTuple{N,T}) where {N,T}
-        return ntuple(i -> p[i][ip, idx...], Val(N))
+        return ntuple(i -> @cell(p[i][ip, idx...]), Val(N))
     end
 
     inode = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     jnode = (blockIdx().y - 1) * blockDim().y + threadIdx().y
 
-    if (inode ≤ size(p[1], 2)) && (jnode ≤ size(p[1], 3))
+    if (inode ≤ size(p[1], 1)) && (jnode ≤ size(p[1], 2))
         idx = (inode, jnode)
 
         for i in 1:max_xcell
-            # check that the particle is inside the grid
-            # isinside(p, xi)
-
             p_i = particle2tuple(i, idx)
 
             any(isnan, p_i) && continue
@@ -113,11 +98,26 @@ function _grid2particle_xvertex!(
             ti = normalize_coordinates(p_i, xvi, dxi, idx)
 
             # Interpolate field F onto particle
-            Fp[i, inode, jnode] = ndlinear(ti, Fi)
+            @cell Fp[i, inode, jnode] = ndlinear(ti, Fi)
         end
     end
 
     return nothing
+end
+
+## CPU 3D
+function grid2particle_xvertex!(Fp::Array, xvi, F::Array{T,3}, particle_coords) where {T}
+    # cell dimensions
+    dxi = grid_size(xvi)
+    nx, ny, nz = length.(xvi)
+    max_xcell = size(particle_coords[1], 1)
+    Threads.@threads for knode in 1:(nz - 1)
+        for jnode in 1:(ny - 1), inode in 1:(nx - 1)
+            _grid2particle_xvertex!(
+                Fp, particle_coords, xvi, dxi, F, max_xcell, (inode, jnode, knode)
+            )
+        end
+    end
 end
 
 ## CPU

@@ -748,7 +748,6 @@ tupleize(v::Tuple) = v
     return nothing
 end
 
-
 @parallel_indices (i, j) function maxloc!(B, A)
 
     nx, ny = size(A)

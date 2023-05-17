@@ -155,18 +155,29 @@ end
 #     return val ≥ min_xcell ? false : true
 # end
 
-@inline function isemptycell(
-    icell::Integer, jcell::Integer, index::AbstractArray{T,N}, min_xcell::Integer
-) where {T,N}
-    return isemptycell((icell, jcell), index, min_xcell)
-end
+# @inline function isemptycell(
+#     icell::Integer, jcell::Integer, index::AbstractArray{T,N}, min_xcell::Integer
+# ) where {T,N}
+#     return isemptycell((icell, jcell), index, min_xcell)
+# end
 
 @inline function isemptycell(
     icell::Integer, jcell::Integer, index::AbstractArray{T,N}, min_xcell::Integer
 ) where {T,N}
+    # first min_xcell particles
+    # val = reduce(+, @cell(index[i, icell, jcell]) for i in 1:min_xcell)
     val = 0
-    for i in axes(index, 1)
-        @inbounds index[i, icell, jcell] && (val += 1)
+    for i in 1:min_xcell
+        val += @cell(index[i, icell, jcell])
+    end
+    # early escape
+    val ≥ min_xcell && return false
+
+    # tail
+    n = cellnum(index)
+    # val += reduce(+, @cell(index[i, icell, jcell]) for i in min_xcell+1:n)
+    for i in min_xcell+1:n
+        val += @cell(index[i, icell, jcell])
     end
     return val ≥ min_xcell ? false : true
 end
