@@ -10,12 +10,31 @@ function init_rheologies(; is_plastic = true)
     # diff_sublithospheric_mantle = DiffusionCreep(A=2.46e-16   , n=1.0, E=375e3, V=10e-6,  r=0.0, R=8.3145)
 
     # Miguelitos
-    disl_upper_crust            = DislocationCreep(A=10^-28.0 , n=4.0, E=223e3, V=0.0  ,  r=0.0, R=8.3145)
+    # disl_upper_crust            = DislocationCreep(A=10^-28.0 , n=4.0, E=223e3, V=0.0  ,  r=0.0, R=8.3145)
+    disl_upper_crust            = DislocationCreep(A=10^-15.40, n=3.0, E=356e3, V=0.0  ,  r=0.0, R=8.3145)
     disl_lower_crust            = DislocationCreep(A=10^-15.40, n=3.0, E=356e3, V=0.0  ,  r=0.0, R=8.3145)
     disl_lithospheric_mantle    = DislocationCreep(A=10^-15.96, n=3.5, E=530e3, V=13e-6,  r=0.0, R=8.3145)
     disl_sublithospheric_mantle = DislocationCreep(A=10^-15.81, n=3.5, E=480e3, V=10e-6,  r=0.0, R=8.3145)
-    diff_lithospheric_mantle    = DiffusionCreep(A=10^-8.16, n=1.0, E=375e3, V=6e-6,  r=0.0, R=8.3145)
-    diff_sublithospheric_mantle = DiffusionCreep(A=10^-8.64, n=1.0, E=335e3, V=4e-6,  r=0.0, R=8.3145)
+    diff_lithospheric_mantle    = DiffusionCreep(  A=10^-8.16 , n=1.0, E=375e3, V=6e-6,  r=0.0, R=8.3145)
+    diff_sublithospheric_mantle = DiffusionCreep(  A=10^-8.64 , n=1.0, E=335e3, V=4e-6,  r=0.0, R=8.3145)
+
+    # Attila
+    disl_upper_crust            = DislocationCreep(A=5.07e-18, n=2.3, E=154e3, V=0.0  ,  r=0.0, R=8.3145)
+    disl_lower_crust            = DislocationCreep(A=2.08e-23, n=3.2, E=238e3, V=0.0  ,  r=0.0, R=8.3145)
+    disl_lithospheric_mantle    = DislocationCreep(A=2.51e-17, n=3.5, E=530e3, V=13e-6,  r=0.0, R=8.3145)
+    disl_sublithospheric_mantle = DislocationCreep(A=2.51e-17, n=3.5, E=530e3, V=13e-6,  r=0.0, R=8.3145)
+    # disl_sublithospheric_mantle = DislocationCreep(A=10^-15.81, n=3.5, E=480e3, V=10e-6,  r=0.0, R=8.3145)
+    diff_lithospheric_mantle    = DiffusionCreep(  A=10^-8.16 , n=1.0, E=375e3, V=6e-6,  r=0.0, R=8.3145)
+    diff_sublithospheric_mantle = DiffusionCreep(  A=10^-8.64 , n=1.0, E=335e3, V=4e-6,  r=0.0, R=8.3145)
+
+
+    # Burov
+    # disl_upper_crust            = DislocationCreep(A=10^-14.96, n=2.25, E=212e3, V=0.0  ,  r=0.0, R=8.3145)
+    # disl_lower_crust            = DislocationCreep(A=10^-14.96, n=2.25, E=212e3, V=0.0  ,  r=0.0, R=8.3145)
+    # disl_lithospheric_mantle    = DislocationCreep(A=10^-15.96, n=3.5 , E=530e3, V=13e-6,  r=0.0, R=8.3145)
+    # disl_sublithospheric_mantle = DislocationCreep(A=10^-19.04, n=3.5 , E=480e3, V=1.1e-5, r=1.2, R=8.3145)
+    # diff_lithospheric_mantle    = DiffusionCreep(  A=10^-8.16 , n=1.0 , E=375e3, V=6e-6,   r=0.0, R=8.3145)
+    # diff_sublithospheric_mantle = DiffusionCreep(  A=10^-16.6 , n=1.0 , E=375e3, V=2e-5,   r=1.0, R=8.3145)
 
     el_upper_crust              = SetConstantElasticity(; G=36e9, ν=0.5)                             # elastic spring
     el_lower_crust              = SetConstantElasticity(; G=40e9, ν=0.5)                             # elastic spring
@@ -130,7 +149,7 @@ function init_rheologies_isoviscous()
             Phase             = 1,
             Density           = PT_Density(; ρ0=2.7e3, β=β, T0=0.0, α = 2.5e-5),
             HeatCapacity      = ConstantHeatCapacity(; cp=7.5e2),
-            Conductivity      = ConstantConductivity(; k=2.7),
+            Conductivity      = ConstantConductivity(; k=2.5),
             CompositeRheology = CompositeRheology((disl_upper_crust, el, pl)),
             Elasticity        = el,
             Gravity           = ConstantGravity(; g=-9.81),
@@ -140,7 +159,7 @@ function init_rheologies_isoviscous()
             Phase             = 2,
             Density           = PT_Density(; ρ0=2.9e3, β=β, T0=0.0, α = 2.5e-5),
             HeatCapacity      = ConstantHeatCapacity(; cp=7.5e2),
-            Conductivity      = ConstantConductivity(; k=2.7),
+            Conductivity      = ConstantConductivity(; k=2.5),
             CompositeRheology = CompositeRheology((disl_lower_crust, el, pl)),
             Elasticity        = el,
         ),
@@ -149,7 +168,7 @@ function init_rheologies_isoviscous()
             Phase             = 3,
             Density           = PT_Density(; ρ0=3.3e3, β=β, T0=0.0, α = 3e-5),
             HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
-            Conductivity      = ConstantConductivity(; k=3.0),
+            Conductivity      = ConstantConductivity(; k=3.5),
             CompositeRheology = CompositeRheology((disl_lithospheric_mantle, diff_lithospheric_mantle,  pl)),
             # Elasticity        = el,
         ),
@@ -158,16 +177,16 @@ function init_rheologies_isoviscous()
             Phase             = 4,
             Density           = PT_Density(; ρ0=3.4e3, β=β, T0=0.0, α = 3e-5),
             HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
-            Conductivity      = ConstantConductivity(; k=3.3),
+            Conductivity      = ConstantConductivity(; k=3.5),
             CompositeRheology = CompositeRheology((disl_sublithospheric_mantle, diff_sublithospheric_mantle,)),
             # Elasticity        = el,
         ),
         # Name              = "Plume",
         SetMaterialParams(;
             Phase             = 5,
-            Density           = PT_Density(; ρ0=3.4e3-25, β=β, T0=0.0, α = 3e-5),
+            Density           = PT_Density(; ρ0=3.4e3-100, β=β, T0=0.0, α = 3e-5),
             HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
-            Conductivity      = ConstantConductivity(; k=3.3),
+            Conductivity      = ConstantConductivity(; k=3.5),
             CompositeRheology = CompositeRheology((disl_sublithospheric_mantle, diff_sublithospheric_mantle, )),
             # Elasticity        = el,
         ),
@@ -199,10 +218,10 @@ function init_phases!(phases, particles::Particles, Lx; d=650e3, r=50e3)
             elseif 40e3 ≥ depth > 20e3
                 @cell phases[ip, i, j] = 2.0
 
-            elseif 120e3 ≥ depth > 40e3
+            elseif 100e3 ≥ depth > 40e3
                 @cell phases[ip, i, j] = 3.0
 
-            elseif depth > 120e3
+            elseif depth > 100e3
                 @cell phases[ip, i, j] = 4.0
 
             elseif 0e0 > depth 
