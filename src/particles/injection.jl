@@ -117,7 +117,6 @@ function _inject_particles!(
     return inject[idx_cell...] = false
 end
 
-
 function inject_particles_phase!(particles::Particles, particles_phases, args, fields, grid::NTuple{2,T}) where {T}
     # unpack
     (; inject, coords, index, min_xcell) = particles
@@ -188,9 +187,9 @@ function _inject_particles_phase!(
 
             particles_num ≥ min_xcell && break
         end
-    end
 
-    inject[idx_cell...] = false
+        inject[idx_cell...] = false
+    end
 
     return nothing
 end
@@ -256,51 +255,3 @@ function new_particle(xvi::NTuple{N,T}, dxi::NTuple{N,T}) where {N,T}
 
     return p_new
 end
-
-# function _inject_particles!(
-#     inject, args, fields, coords, index, grid, dxi, nxcell, icell, jcell
-# )
-#     dx, dy = dxi
-#     max_xcell = size(index, 1)
-
-#     # closures -----------------------------------
-#     first_cell_index(i) = (i - 1) * max_xcell + 1
-#     myrand() = rand(-1:2:1) * rand() * 0.5
-#     # --------------------------------------------
-
-#     @inbounds if inject[icell, jcell]
-#         # count current number of particles inside the cell
-#         particles_num = false
-#         for i in 1:max_xcell
-#             particles_num += index[i, icell, jcell]
-#         end
-
-#         # coordinates of the lower-left center
-#         xv, yv = corner_coordinate(grid, (icell, jcell))
-
-#         for i in 1:max_xcell
-#             if index[i, icell, jcell] === false
-#                 particles_num += 1
-
-#                 # add at cellcenter + small random perturbation
-#                 px_new = xv + dx * 0.5 * (1.0 + myrand())
-#                 py_new = yv + dy * 0.5 * (1.0 + myrand())
-#                 p_new = (px_new, py_new)
-#                 coords[1][i, icell, jcell] = px_new
-#                 coords[2][i, icell, jcell] = py_new
-#                 index[i, icell, jcell] = true
-
-#                 for (arg_i, field_i) in zip(args, fields)
-#                     tmp = _grid2particle_xvertex(p_new, grid, dxi, field_i, icell, jcell)
-#                     arg_i[i, icell, jcell] = clamp(tmp, extrema(field_i)...)
-#                     # arg_i[i, icell, jcell] = field_i[icell, jcell]
-#                     # arg_i[i, icell, jcell] = 0.0
-#                 end
-#             end
-
-#             particles_num == nxcell && break
-#         end
-#     end
-
-#     return inject[icell, jcell] = false
-# end
