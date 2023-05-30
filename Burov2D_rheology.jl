@@ -203,10 +203,10 @@ function init_rheologies_isoviscous()
 end
 
 function init_phases!(phases, particles::Particles, Lx; d=650e3, r=50e3)
-    ni = size(phases, 1), size(phases, 2)
+    ni = size(phases)
 
     @parallel_indices (i, j) function init_phases!(phases, px, py, index, r, Lx)
-        @inbounds for ip in 1:prod(cellsize(phases))
+        @inbounds for ip in cellaxes(phases)
             # quick escape
             @cell(index[ip, i, j]) == 0 && continue
 
@@ -230,7 +230,7 @@ function init_phases!(phases, particles::Particles, Lx; d=650e3, r=50e3)
             end
 
             # plume
-            if (((x - Lx * 0.5))^2 + ((depth - d))^2) ≤ r^2
+            if ((x - Lx * 0.5)^2 + (depth - d)^2) ≤ r^2
                 @cell phases[ip, i, j] = 5.0
             end
         end
@@ -238,6 +238,45 @@ function init_phases!(phases, particles::Particles, Lx; d=650e3, r=50e3)
     end
 
     @parallel (@idx ni) init_phases!(phases, particles.coords..., particles.index, r, Lx)
+end
+
+function init_phases!(phases, particles::Particles, Lx, Ly; d=650e3, r=50e3)
+
+    @parallel_indices (i, j, k) function init_phases!(phases, px, py, pz, index, r, Lx, Ly)
+        @inbounds for ip in cellaxes(phases)
+            # quick escape
+            @cell(index[ip, i, j, k]) == 0 && continue
+
+            x     = @cell px[ip, i, j, k]
+            y     = @cell py[ip, i, j, k]
+            depth = abs(@cell pz[ip, i, j, k]) #- 45e3 
+            if 0e0 ≤ depth ≤ 20e3
+                @cell phases[ip, i, j, k] = 1.0
+
+            elseif 40e3 ≥ depth > 20e3
+                @cell phases[ip, i, j, k] = 2.0
+
+            elseif 100e3 ≥ depth > 40e3
+                @cell phases[ip, i, j, k] = 3.0
+
+            elseif depth > 100e3
+                @cell phases[ip, i, j, k] = 4.0
+
+            elseif 0e0 > depth 
+                @cell phases[ip, i, j, k] = 6.0
+
+            end
+
+            # plume
+            if ((x - Lx * 0.5)^2 + (y - Ly * 0.5)^2 + (depth - d)^2) ≤ r^2
+                @cell phases[ip, i, j, k] = 5.0
+            end
+        end
+        return nothing
+    end
+
+    ni = size(phases)
+    @parallel (@idx ni) init_phases!(phases, particles.coords..., particles.index, r, Lx, Ly)
 end
 
 function dirichlet_velocities!(Vx, εbg, xvi, xci)
