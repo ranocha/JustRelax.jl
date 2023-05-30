@@ -36,22 +36,34 @@ Return the number of phases in `x::PhaseRatio`.
 @inline nphases(x::PhaseRatio) = nphases(x.center)
 @inline nphases(::CellArray{StaticArraysCore.SArray{Tuple{N}, T, N1, N}, N2, N3, T_Array}) where {N, T, N1, N2, N3, T_Array} = N
 
+# ParallelStencil launch kernel for 2D
+@parallel_indices (i, j) function phase_ratios_center(x, phases)
+    phase_ratios_center(x, phases, i, j)
+    return nothing
+end
+
+# ParallelStencil launch kernel for 3D
+@parallel_indices (i, j, k) function phase_ratios_center(x, phases)
+    phase_ratios_center(x, phases, i, j, k)
+    return nothing
+end
+
 """
     phase_ratios_center(x::PhaseRatio, cell::Vararg{Int, N})
 
 Compute the phase ratios at the center of the cell `cell` in `x::PhaseRatio`.
 """
-@inline phase_ratios_center(x::PhaseRatio, phases, cell::Vararg{Int, N}) where N = phase_ratios_center(x.center, phases, cell...)
+phase_ratios_center(x::PhaseRatio, phases, cell::Vararg{Int, N}) where N = phase_ratios_center(x.center, phases, cell...)
 
-function phase_ratios_center(x::CellArray, phases, cell::Vararg{Int, N}) where N
+@inline function phase_ratios_center(x::CellArray, phases, cell::Vararg{Int, N}) where N
     # total number of material phases
     num_phases = Val(nphases(x))
     # number of active particles in this cell
-    _n = 0
+    n = 0
     for j in cellaxes(phases)
-        _n += isinteger(@cell(phases[j, cell...])) && @cell(phases[j, cell...]) != 0
+        n += isinteger(@cell(phases[j, cell...])) && @cell(phases[j, cell...]) != 0
     end
-    _n = inv(_n)
+    _n = inv(n)
     # compute phase ratios
     ratios = _phase_ratios_center(phases, num_phases, _n, cell...)
     for (i, ratio) in enumerate(ratios)
@@ -64,18 +76,13 @@ end
         Base.@_inline_meta
         Base.@nexprs $N1 i -> reps_i = (
             c = 0;
-            for j in 1:prod(cellsize(phases))
+            for j in cellaxes(phases)
                 c += @cell(phases[j, cell...]) == i
             end;
             c * _n
         )
         Base.@ncall $N1 tuple reps
     end
-end
-
-@parallel_indices (i, j) function phase_ratios_center(x, phases)
-    phase_ratios_center(x, phases, i, j)
-    return nothing
 end
 
 """
@@ -87,8 +94,9 @@ Average the function `fn` over the material phases in `rheology` using the phase
     quote
         Base.@_inline_meta 
         x = 0.0
-        Base.@nexprs $N i -> x += ratio[i] == 0 ? 0.0 : fn(rheology[i]) * ratio[i]
-        x * inv($N)
+        Base.@nexprs $N i -> x += !(ratio[i] == 0) * fn(rheology[i]) * ratio[i]
+        # Base.@nexprs $N i -> x += ratio[i] == 0 ? 0.0 : fn(rheology[i]) * ratio[i]
+        return x * inv($N)
     end
 end
 
@@ -96,7 +104,8 @@ end
     quote
         Base.@_inline_meta 
         x = 0.0
-        Base.@nexprs $N i -> x += ratio[i] == 0 ? 0.0 : fn(rheology[i], args) * ratio[i]
-        x * inv($N)
+        Base.@nexprs $N i -> x += !(ratio[i] == 0) * fn(rheology[i], args) * ratio[i]
+        # Base.@nexprs $N i -> x += ratio[i] == 0 ? 0.0 : fn(rheology[i], args) * ratio[i]
+        return x * inv($N)
     end
 end
