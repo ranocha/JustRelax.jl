@@ -47,6 +47,8 @@ function environment!(model::PS_Setup{T,N}) where {T,N}
 
         include(joinpath(@__DIR__, "Utils.jl"))
         export @allocate, @add, @idx, @copy
+        export @strain, @stress, @strain_center, @stress_center, @tensor, @tensor_center, @velocity,
+            @normal, @shear
         export compute_dt, assign!, tupleize
 
         include(joinpath(@__DIR__, "boundaryconditions/BoundaryConditions.jl"))
@@ -59,7 +61,7 @@ function environment!(model::PS_Setup{T,N}) where {T,N}
         export stress
 
         include(joinpath(@__DIR__, "phases/CallArrays.jl"))
-        export @cell, element, setelement!, cellnum, cellaxes
+        export @cell, element, setelement!, cellnum, cellaxes, new_empty_cell
 
         include(joinpath(@__DIR__, "phases/phases.jl"))
         export PhaseRatio, fn_ratio, phase_ratios_center, setindex!
