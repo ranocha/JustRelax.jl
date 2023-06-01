@@ -7,7 +7,7 @@ using CUDA
 # using Pkg; Pkg.add(url="https://github.com/JuliaGeodynamics/GeoParams.jl"; rev="adm-arrhenius_dim")
 
 # setup ParallelStencil.jl environment
-model = PS_Setup(:gpu, Float64, 3)
+# model = PS_Setup(:gpu, Float64, 3)
 model = PS_Setup(:cpu, Float64, 3)
 environment!(model)
 
@@ -132,7 +132,7 @@ end
     )
     # update stress and effective viscosity
     _, _, ηi   = compute_τij_ratio(MatParam, ratio_ij, εij_p, args_ij, τij_p_o)
-    η[i, j, k] = clamp(2*ηi, 1e16, 1e24)
+    η[i, j, k] = clamp(ηi, 1e16, 1e24)
     
     return nothing
 end
@@ -200,7 +200,7 @@ end
 
 function elliptical_perturbation!(T, δT, xc, yc, zc, r, xvi)
 
-    @parallel_indices (i, j, k) function _elliptical_perturbation!(T, δT, xc, yc, zc, r, x, y, z)
+    @parallel_indices (i, j, k) function _elliptical_perturbation!(x, y, z)
         @inbounds if (((x[i]-xc))^2 + ((y[j] - yc))^2 + ((z[k] - zc))^2) ≤ r^2
             T[i, j, k] = 2e3
             # T[i, j, k] += δT
@@ -208,7 +208,7 @@ function elliptical_perturbation!(T, δT, xc, yc, zc, r, xvi)
         return nothing
     end
 
-    @parallel _elliptical_perturbation!(T, δT, xc, yc, yc, r, xvi...)
+    @parallel _elliptical_perturbation!(xvi...)
 end
 
 @parallel_indices (i, j, k) function compute_ρg!(ρg, rheology, args)
@@ -229,9 +229,6 @@ end
     return nothing
 end
 
-@parallel (@idx ni) compute_ρg!(ρg[3], phase_ratios.center, rheology, (T=thermal.T, P=stokes.P))
-
-
 @parallel_indices (i, j, k) function compute_invariant!(II, xx, yy, zz, yz, xz, xy)
 
     # convinience closure
@@ -241,16 +238,16 @@ end
     
     @inbounds begin
         ij = (
-            xx[i, j, k]  , yy[i, j, k]  , zz[i, j, k]  ,
+            xx[i, j, k]   , yy[i, j, k]   , zz[i, j, k]   ,
             _gather_yz(yz), _gather_xz(xz), _gather_xy(xy),
         )
-        II[i, j, k] = GeoParams.second_invariant(ij...)
+        II[i, j, k] = second_invariant(ij...)
     end
     
     return nothing
 end
 
-function main3D(nx, ny, nz, ar, figdir="figs2D")
+function main3D(nx, ny, nz, ar; figdir="figs2D")
 
     # Physical domain ------------------------------------
     lz       = 650e3             # domain length in y
@@ -262,12 +259,21 @@ function main3D(nx, ny, nz, ar, figdir="figs2D")
     xci, xvi = lazy_grid(di, li, ni; origin=origin) # nodes at the center and vertices of the cells
     # ----------------------------------------------------
 
+    # Init MPI -------------------------------------------
+    igg  = IGG(
+        init_global_grid(nx, ny, nz; init_MPI=false)...
+    )
+    ni_v = nx_g(), ny_g(), nz_g()
+    # ni_v = (nx-2)*igg.dims[1], (ny-2)*igg.dims[2], (nz-2)*igg.dims[3]
+    # ----------------------------------------------------
+    
     # Physical properties using GeoParams ----------------
     # Define rheolgy struct
-    rheology     = init_rheologies(; is_plastic = false)
-    rheology_pl  = init_rheologies(; is_plastic = true)
+    # rheology     = init_rheologies(; is_plastic = false)
+    # rheology_pl  = init_rheologies(; is_plastic = true)
+    rheology  = init_rheologies_isoviscous()
     κ            = (rheology[1].Conductivity[1].k / (rheology[1].HeatCapacity[1].cp * rheology[1].Density[1].ρ0)).val
-    dt = dt_diff = 0.5 * min(di...)^3 / κ / 3.01 # diffusive CFL timestep limiter
+    dt = dt_diff = min(di...)^2 / κ / 3.01 # diffusive CFL timestep limiter
     # ----------------------------------------------------
     
     # Initialize particles -------------------------------
@@ -321,7 +327,7 @@ function main3D(nx, ny, nz, ar, figdir="figs2D")
             thermal_bc,
             rheology,
             phase_ratios,
-            (; P=0.0),
+            (; P=stokes.P),
             di,
             dt 
         )
@@ -344,13 +350,15 @@ function main3D(nx, ny, nz, ar, figdir="figs2D")
     # Rheology
     η               = @ones(ni...)
     args_ηv         = (; T = thermal.T, P = stokes.P, depth = xci[3], dt = Inf)
-    @parallel (@idx ni) compute_viscosity!(η, phase_ratios.center, stokes.ε.xx, stokes.ε.yy, stokes.ε.zz,stokes.ε.yz, stokes.ε.xz, stokes.ε.xy, args_ηv, rheology)
-    
+    @parallel (@idx ni) compute_viscosity!(η, phase_ratios.center, @strain(stokes)..., args_ηv, rheology)
+ 
     η_vep           = deepcopy(η)
     # Boundary conditions
     flow_bcs = FlowBoundaryConditions(; 
-        free_slip    = (left = true, right=true, top=true, bot=true),
-        periodicity  = (left = false, right = false, top = false, bot = false),
+        free_slip   = (left=true , right=true , top=true , bot=true , front=true , back=true ),
+        # free_slip   = (left=false, right=false, top=false, bot=false, front=false, back=false),
+        no_slip     = (left=false, right=false, top=false, bot=false, front=false, back=false),
+        periodicity = (left=false, right=false, top=false, bot=false, front=false, back=false),
         free_surface = false
     )
    
@@ -361,15 +369,15 @@ function main3D(nx, ny, nz, ar, figdir="figs2D")
 
     # Plot initial T and η profiles
     fig0 = let
-        Yv = [y for x in xvi[1], y in xvi[2]][:]
-        Y =  [y for x in xci[1], y in xci[2]][:]
+        Zv  = [z for x in xvi[1], y in xvi[2], z in xvi[3]][:]
+        Z   = [z for x in xci[1], y in xci[2], z in xci[3]][:]
         fig = Figure(resolution = (1200, 900))
         ax1 = Axis(fig[1,1], aspect = 2/3, title = "T")
         ax2 = Axis(fig[1,2], aspect = 2/3, title = "log10(η)")
-        lines!(ax1, Array(thermal.T[2:end-1,:][:]), Yv./1e3)
-        lines!(ax2, Array(log10.(η[:])), Y./1e3)
-        ylims!(ax1, minimum(xvi[2])./1e3, 0)
-        ylims!(ax2, minimum(xvi[2])./1e3, 0)
+        lines!(ax1, Array(thermal.T[:]), Zv./1e3; linewidth=5)
+        lines!(ax2, Array(log10.(η[:])), Z./1e3 ; linewidth=5)
+        ylims!(ax1, minimum(xvi[3])./1e3, 0)
+        ylims!(ax2, minimum(xvi[3])./1e3, 0)
         hideydecorations!(ax2)
         save( joinpath(figdir, "initial_profile.png"), fig)
         fig
@@ -378,18 +386,17 @@ function main3D(nx, ny, nz, ar, figdir="figs2D")
     # Time loop
     t, it = 0.0, 0
     nt    = 10
-    T_buffer = deepcopy(thermal.T[2:end-1, :])
     local iters
     # while it < nt
     while (t/(1e6 * 3600 * 24 *365.25)) < 100
         # Update buoyancy and viscosity -
-        args_ηv = (; T = thermal.T, P = stokes.P, depth = xci[2], dt=Inf)
-        @parallel (@idx ni) compute_viscosity!(η, phase_ratios.center, stokes.ε.xx, stokes.ε.yy, stokes.ε.xy, args_ηv, rheology)
-        @parallel (@idx ni) compute_ρg!(ρg[2], phase_ratios.center, rheology, (T=thermal.T, P=stokes.P))
+        args_ηv = (; T = thermal.T, P = stokes.P, dt=Inf)
+        @parallel (@idx ni) compute_viscosity!(η, phase_ratios.center, @strain(stokes)..., args_ηv, rheology)
+        @parallel (@idx ni) compute_ρg!(ρg[3], phase_ratios.center, rheology, (T=thermal.T, P=stokes.P))
         # ------------------------------
  
         # Stokes solver ----------------
-        λ, iters = solve!(
+        iters = solve!(
             stokes,
             thermal,
             pt_stokes,
@@ -399,13 +406,13 @@ function main3D(nx, ny, nz, ar, figdir="figs2D")
             η,
             η_vep,
             phase_ratios,
-            (rheology, rheology_pl),
-            # it > 5 ? rheology_pl : rheology,
-            dt,
-            iterMax=150e3,
-            nout=1e3,
+            rheology,
+            Inf,
+            igg,
+            iterMax=10e3,
+            nout=500,
         );
-        @parallel (@idx ni) compute_invariant!(stokes.ε.II, stokes.ε.xx, stokes.ε.yy, stokes.ε.xy)
+        @parallel (@idx ni) compute_invariant!(stokes.ε.II, @strain(stokes)...)
         dt = compute_dt(stokes, di, dt_diff) * .75
         # ------------------------------
 
@@ -424,54 +431,54 @@ function main3D(nx, ny, nz, ar, figdir="figs2D")
 
         # Advection --------------------
         # interpolate fields from grid vertices to particles
-        T_buffer .= deepcopy(thermal.T[2:end-1, :])
-        grid2particle_xvertex!(pT, xvi, T_buffer, particles.coords)
+        grid2particle_xvertex!(pT, xvi, thermal.T, particles.coords)
         # advect particles in space
-        V = stokes.V.Vx, stokes.V.Vy
-        advection_RK2!(particles, V, grid_vx, grid_vy, dt, 2 / 3)
+        V = stokes.V.Vx, stokes.V.Vy, stokes.V.Vz
+        advection_RK2!(particles, V, grid_vx, grid_vy, grid_vz, dt, 2 / 3)
         # advect particles in memory
         shuffle_particles_vertex!(particles, xvi, particle_args)
         clean_particles!(particles, xvi, particle_args)
         # check if we need to inject particles
         @show inject = check_injection(particles)
-        inject && inject_particles_phase!(particles, pPhases, (pT, ), (T_buffer,), xvi)
+        inject && inject_particles_phase!(particles, pPhases, (pT, ), (thermal.T,), xvi)
         # update phase ratios
         @parallel (@idx ni) phase_ratios_center(phase_ratios.center, pPhases)
         # interpolate fields from particle to grid vertices
-        gathering_xvertex!(T_buffer, pT, xvi, particles.coords)
-        # gather_temperature_xvertex!(T_buffer, pT, ρCₚp, xvi, particles.coords)
-        @views T_buffer[:, end]      .= 273.0
-        @views thermal.T[2:end-1, :] .= T_buffer
-        @views thermal.T[:, 1]       .= Tmax
+        gathering_xvertex!(thermal.T, pT, xvi, particles.coords)
+        # gather_temperature_xvertex!(thermal.T, pT, ρCₚp, xvi, particles.coords)
+        @views thermal.T[:, :, end]      .= 273.0
+        @views thermal.T[:, :, 1]       .= Tmax
         
         @show it += 1
         t += dt
 
         # # Plotting ---------------------
         if it == 1 || rem(it, 10) == 0
+            slice_j = Int(ny ÷ 2)
             p = particles.coords
-            ppx, ppy = p
-            pxv = ppx.data[:]./1e3
-            pyv = ppy.data[:]./1e3
+            ppx, ppy, ppz = p
+            pxv = ppx.data[:]./1e3;
+            pyv = ppy.data[:]./1e3;
+            pzv = ppz.data[:]./1e3;
             clr = pPhases.data[:]
             # ppT = pT.data[:]
             idxv = particles.index.data[:]
 
             fig = Figure(resolution = (1000, 1600), title = "t = $t")
             ax1 = Axis(fig[1,1], aspect = ar, title = "T [K]  (t=$(t/(1e6 * 3600 * 24 *365.25)) Myrs)")
-            ax2 = Axis(fig[2,1], aspect = ar, title = "Vy [m/s]")
+            ax2 = Axis(fig[2,1], aspect = ar, title = "Vz [m/s]")
             ax3 = Axis(fig[3,1], aspect = ar, title = "τII [MPa]")
             # ax4 = Axis(fig[4,1], aspect = ar, title = "ρ [kg/m3]")
             # ax4 = Axis(fig[4,1], aspect = ar, title = "τII - τy [Mpa]")
             ax4 = Axis(fig[4,1], aspect = ar, title = "log10(η)")
-            h1 = heatmap!(ax1, xvi[1].*1e-3, xvi[2].*1e-3, Array(thermal.T[2:end-1,:]) , colormap=:batlow)
-            # h1 = heatmap!(ax1, xvi[1].*1e-3, xvi[2].*1e-3, Array(abs.(ρg[2]./9.81)) , colormap=:batlow)
-            # h2 = heatmap!(ax2, xci[1].*1e-3, xvi[2].*1e-3, Array(stokes.V.Vy[2:end-1,:]) , colormap=:batlow)
-            h2 = scatter!(ax2, Array(pxv[idxv]), Array(pyv[idxv]), color=Array(clr[idxv]))
-            # h3 = heatmap!(ax3, xci[1].*1e-3, xci[2].*1e-3, Array(stokes.τ.II.*1e-6) , colormap=:batlow) 
-            h3 = heatmap!(ax3, xci[1].*1e-3, xci[2].*1e-3, Array(log10.(stokes.ε.II)) , colormap=:batlow) 
+            # h1 = heatmap!(ax1, xvi[1].*1e-3, xvi[3].*1e-3, Array(thermal.T[:,slice_j,:]) , colormap=:batlow)
+            h1 = heatmap!(ax1, xvi[1].*1e-3, xvi[3].*1e-3, Array(abs.(ρg[3][:,slice_j,:]./9.81)) , colormap=:batlow)
+            h2 = heatmap!(ax2, xci[1].*1e-3, xvi[3].*1e-3, Array(stokes.V.Vz[:, slice_j,:]) , colormap=:batlow)
+            # h2 = scatter!(ax2, Array(pxv[idxv]), Array(pyv[idxv]), color=Array(clr[idxv]))
+            h3 = heatmap!(ax3, xci[1].*1e-3, xci[2].*1e-3, Array(stokes.τ.II[:,slice_j,:].*1e-6) , colormap=:batlow) 
+            # h3 = heatmap!(ax3, xci[1].*1e-3, xci[3].*1e-3, Array(log10.(stokes.ε.II[:,slice_j,:])) , colormap=:batlow) 
             # # h3 = heatmap!(ax3, xci[1].*1e-3, xci[2].*1e-3, Array(log10.(abs.(stokes.ε.xx))) , colormap=:batlow) 
-            h4 = heatmap!(ax4, xci[1].*1e-3, xci[2].*1e-3, Array(log10.(η)) , colormap=:batlow)
+            h4 = heatmap!(ax4, xci[1].*1e-3, xci[3].*1e-3, Array(log10.(η[:,slice_j,:])) , colormap=:batlow)
             # h4 = heatmap!(ax4, xci[1].*1e-3, xci[2].*1e-3, Array(abs.(ρg[2]./9.81)) , colormap=:batlow)
             # h4 = heatmap!(ax4, xci[1].*1e-3, xci[2].*1e-3, Array(@.(stokes.P * friction  + cohesion - stokes.τ.II)/1e6) , colormap=:batlow)
             hidexdecorations!(ax1)
@@ -480,7 +487,7 @@ function main3D(nx, ny, nz, ar, figdir="figs2D")
             Colorbar(fig[1,2], h1) #, height=100)
             Colorbar(fig[2,2], h2) #, height=100)
             Colorbar(fig[3,2], h3) #, height=100)
-            Colorbar(fig[4,2], h4) #, height=100)
+            # Colorbar(fig[4,2], h4) #, height=100)
             save( joinpath(figdir, "$(it).png"), fig)
             fig
         end
