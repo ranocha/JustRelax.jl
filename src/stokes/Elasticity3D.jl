@@ -146,6 +146,14 @@ end
     return nothing
 end
 
+## With phase ratios and GeoParams
+@parallel_indices (i, j, k) function compute_P!(P, P_old, RP, ∇V, η, rheology, phase_ratios, dt, r, θ_dτ)
+    _Kdt        = fn_ratio(get_Kb, rheology, phase_ratios[i, j, k]) * dt |> inv
+    RP[i, j, k] = -∇V[i, j, k] - (P[i, j, k] - P_old[i, j, k]) * _Kdt
+    P[i, j, k]  =   P[i, j, k] + RP[i, j, k] / (inv(r * η[i, j, k] / θ_dτ) + _Kdt)
+    return nothing
+end
+
 @parallel_indices (i, j, k) function compute_V!(
     Vx,
     Vy,
@@ -376,6 +384,77 @@ end
     return nothing
 end
 
+
+@parallel_indices (i, j, k) function compute_τ_vertex!(
+    τyz,
+    τxz,
+    τxy,
+    τyz_o,
+    τxz_o,
+    τxy_o,
+    εyz,
+    εxz,
+    εxy,
+    η,
+    rheology,
+    phase_ratios,
+    dt,
+    θ_dτ,
+)
+    # convinience closures
+    @inline Base.@propagate_inbounds function av_xy(x)
+        0.25 * (x[i - 1, j - 1, k] + x[i - 1, j, k] + x[i, j - 1, k] + x[i, j, k])
+    end
+    @inline Base.@propagate_inbounds function av_xz(x)
+        0.25 * (x[i, j, k] + x[i - 1, j, k] + x[i, j, k - 1] + x[i - 1, j, k - 1])
+    end
+    @inline Base.@propagate_inbounds function av_yz(x)
+        0.25 * (x[i, j, k] + x[i, j - 1, k] + x[i, j, k - 1] + x[i, j - 1, k - 1])
+    end
+
+    @inline Base.@propagate_inbounds current(x) = x[i, j, k]
+
+    @inline av_Gdt(fn::F) where F = fn_ratio(get_G, rheology, fn(phase_ratios)) * dt |> inv
+
+    @inbounds begin
+        # Compute τ_xy
+        if (1 < i < size(τxy, 1)) && (1 < j < size(τxy, 2)) && k ≤ size(τxy, 3)
+            # average shear modulus
+            _Gdt = av_Gdt(av_xy)
+            # update shear stress4
+            τxy[i, j, k] +=
+                (
+                    -(current(τxy) - current(τxy_o)) * av_xy(η) * _Gdt -
+                    current(τxy) + 2.0 * av_xy(η) * current(εxy)
+                ) / (θ_dτ + av_xy(η) * _Gdt + 1.0)
+        end
+        # Compute τ_xz
+        if (1 < i < size(τxz, 1)) && j ≤ size(τxz, 2) && (1 < k < size(τxz, 3))
+            # average shear modulus
+            _Gdt = av_Gdt(av_xz)
+            # update shear stress
+            τxz[i, j, k] +=
+                (
+                    -(current(τxz) - current(τxz_o)) * av_xz(η) * _Gdt -
+                    current(τxz) + 2.0 * av_xz(η) * current(εxz)
+                ) / (θ_dτ + av_xz(η) * _Gdt + 1.0)
+        end
+        # Compute τ_yz
+        if i ≤ size(τyz, 1) && (1 < j < size(τyz, 2)) && (1 < k < size(τyz, 3))
+            # average shear modulus
+            _Gdt = av_Gdt(av_yz)
+            # update shear stress
+            τyz[i, j, k] +=
+                (
+                    -(current(τyz) - current(τyz_o)) * av_yz(η) * _Gdt -
+                    current(τyz) + 2.0 * av_yz(η) * current(εyz)
+                ) / (θ_dτ + av_yz(η) * _Gdt + 1.0)
+        end
+    end
+    return nothing
+end
+
+
 # visco-elasto-plastic with GeoParams
 @parallel_indices (i, j, k) function compute_τ_gp!(
     τxx,
@@ -401,7 +480,7 @@ end
     η_vep, 
     args_η, 
     T, 
-    MatParam, 
+    rheology, 
     dt, 
     θ_dτ,
 )
@@ -415,7 +494,7 @@ end
     )
 
     @inbounds begin
-        # dτ_r = 1.0 / (θ_dτ + η[i, j, k] / (get_G(MatParam[1]) * dt) + 1.0) # original
+        # dτ_r = 1.0 / (θ_dτ + η[i, j, k] / (get_G(rheology[1]) * dt) + 1.0) # original
         dτ_r  = 1.0 / (θ_dτ / η[i, j, k] + 1.0 / η_vep[i, j, k]) # equivalent to dτ_r = @. 1.0/(θ_dτ + η/(G*dt) + 1.0)
         # Setup up input for GeoParams.jl
         # T_cell = 0.125 * (
@@ -423,7 +502,7 @@ end
         #     T[i, j, k+1] + T[i, j+1, k+1] + T[i+1, j, k+1] + T[i+1, j+1, k+1]
         # )
         # args = (; dt=dt, P = 1e6 * (1 - z[k]), T=T_cell, τII_old=0.0)
-        args = (; dt=dt, P = (args_η.P[i, j, k]), depth = abs(args_η.depth[k]), T=av(T), τII_old=0.0)
+        args = (; dt=dt, P = (args_η.P[i, j, k]), T=av(T), τII_old=0.0)
         # args = (; dt=dt, P = (args_η.P[i, j, k]), depth = abs(args_η.depth[k]), T=1.e3, τII_old=0.0)
 
         εij_p = (
@@ -444,7 +523,7 @@ end
         )
         phases = 1, 1, 1, (1,1,1,1), (1,1,1,1), (1,1,1,1) # for now hard-coded for a single phase
         # update stress and effective viscosity
-        τij, τII[i, j, k], ηᵢ = compute_τij(MatParam, εij_p, args, τij_p_o, phases)
+        τij, τII[i, j, k], ηᵢ = compute_τij(rheology, εij_p, args, τij_p_o, phases)
         τ = ( # caching out improves a wee bit the performance
             τxx[i, j, k],
             τyy[i, j, k],
@@ -675,7 +754,7 @@ function JustRelax.solve!(
     η,
     η_vep,
     args_η,
-    MatParam::MaterialParams,
+    rheology::MaterialParams,
     dt,
     igg::IGG;
     iterMax=10e3,
@@ -714,8 +793,8 @@ function JustRelax.solve!(
     norm_Rz = Float64[]
     norm_∇V = Float64[]
 
-    Kb = get_Kb(MatParam)
-    G  = get_G(MatParam)
+    Kb = get_Kb(rheology)
+    G  = get_G(rheology)
     @copy stokes.P0 stokes.P
 
     # solver loop
@@ -773,7 +852,7 @@ function JustRelax.solve!(
                 η_vep,
                 args_η,
                 thermal.T,
-                tupleize(MatParam), # needs to be a tuple
+                tupleize(rheology), # needs to be a tuple
                 dt,
                 pt_stokes.θ_dτ,
             )
@@ -863,6 +942,444 @@ function JustRelax.solve!(
         time=wtime0,
         av_time=av_time,
     )
+end
+
+# GeoParams and multiple phases
+function JustRelax.solve!(
+    stokes::StokesArrays{ViscoElastic,A,B,C,D,3},
+    thermal::ThermalArrays,
+    pt_stokes::PTStokesCoeffs,
+    di::NTuple{3,T},
+    flow_bc::FlowBoundaryConditions,
+    ρg,
+    η,
+    η_vep,
+    phase_ratios::PhaseRatio,
+    rheology::NTuple{N, AbstractMaterialParamsStruct},
+    dt,
+    igg::IGG;
+    iterMax=10e3,
+    nout=500,
+    b_width=(4, 4, 4),
+    verbose=true,
+) where {A,B,C,D,T,N}
+
+    ## UNPACK
+
+    # solver related
+    ϵ = pt_stokes.ϵ
+    # geometry
+    _di = @. 1 / di
+    ni = nx, ny, nz = size(stokes.P)
+    # z = LinRange(di[3]*0.5, 1.0-di[3]*0.5, nz)
+
+    # ~preconditioner
+    ητ = deepcopy(η)
+    @hide_communication b_width begin # communication/computation overlap
+        @parallel compute_maxloc!(ητ, η)
+        update_halo!(ητ)
+    end
+    @parallel (1:ny, 1:nz) free_slip_x!(ητ)
+    @parallel (1:nx, 1:nz) free_slip_y!(ητ)
+    @parallel (1:nx, 1:ny) free_slip_z!(ητ)
+
+    # errors
+    err = 2 * ϵ
+    iter = 0
+    cont = 0
+    err_evo1 = Float64[]
+    err_evo2 = Int64[]
+    norm_Rx = Float64[]
+    norm_Ry = Float64[]
+    norm_Rz = Float64[]
+    norm_∇V = Float64[]
+
+    # Kb = get_Kb(rheology)
+    # G  = get_G(rheology)
+    @copy stokes.P0 stokes.P
+    # λ = @zeros(ni...)
+
+    # solver loop
+    wtime0 = 0.0
+    while iter < 2 || (err > ϵ && iter ≤ iterMax)
+        wtime0 += @elapsed begin
+
+            # Update viscosity
+            args_ηv = (; T = thermal.T, P = stokes.P, dt=Inf)
+            ν = iter > 1 ? 0.5 : 1.0
+            @parallel (@idx ni) compute_viscosity!(η, ν, phase_ratios.center, @strain(stokes)..., args_ηv, rheology)
+            @hide_communication b_width begin # communication/computation overlap
+                @parallel compute_maxloc!(ητ, η)
+                update_halo!(ητ)
+            end
+            @parallel (1:ny, 1:nz) free_slip_x!(ητ)
+            @parallel (1:nx, 1:nz) free_slip_y!(ητ)
+            @parallel (1:nx, 1:ny) free_slip_z!(ητ)
+
+            # Update buoyancy
+            @parallel (@idx ni) compute_ρg!(ρg[3], phase_ratios.center, rheology, (T=thermal.T, P=stokes.P))
+         
+            @parallel (@idx ni) compute_∇V!(
+                stokes.∇V, @velocity(stokes)..., _di...
+            )
+            @parallel (@idx ni) compute_P!(
+                stokes.P,
+                stokes.P0,
+                stokes.R.RP,
+                stokes.∇V,
+                η,
+                rheology,
+                phase_ratios.center,
+                dt,
+                pt_stokes.r,
+                pt_stokes.θ_dτ,
+            )
+            @parallel (@idx ni) compute_strain_rate!(
+                stokes.∇V,
+                @strain(stokes)...,
+                @velocity(stokes)...,
+                _di...,
+            )
+            @parallel (@idx ni) compute_τ_new!(
+                @stress_center(stokes)...,
+                stokes.τ.II,
+                @tensor(stokes.τ_o)...,
+                @strain(stokes)...,
+                stokes.P,
+                η,
+                η_vep,
+                phase_ratios.center,
+                rheology, # needs to be a tuple
+                dt,
+                pt_stokes.θ_dτ,
+            )
+            # @parallel center2vertex!(
+            #     stokes.τ.yz, stokes.τ.xz, stokes.τ.xy, stokes.τ.yz_c, stokes.τ.xz_c, stokes.τ.xy_c
+            # )
+            
+            # args_η = (; P = stokes.P, T=thermal.T)
+            # @parallel (@idx ni) compute_τ_gp!(
+            #     @stress_center(stokes)...,
+            #     stokes.τ.II,
+            #     @tensor(stokes.τ_o)...,
+            #     @strain(stokes)...,
+            #     η,
+            #     η_vep,
+            #     args_η,
+            #     thermal.T,
+            #     rheology, # needs to be a tuple
+            #     dt,
+            #     pt_stokes.θ_dτ,
+            # )
+
+            @parallel (@idx ni.+1) compute_τ_vertex!(
+                @shear(stokes.τ)...,
+                @shear(stokes.τ_o)...,
+                @shear(stokes.ε)...,
+                η_vep,
+                rheology,
+                phase_ratios.center,
+                dt,
+                pt_stokes.θ_dτ,
+            )
+
+            @hide_communication b_width begin # communication/computation overlap
+                @parallel compute_V!(
+                    @velocity(stokes)...,
+                    stokes.R.Rx,
+                    stokes.R.Ry,
+                    stokes.R.Rz,
+                    stokes.P,
+                    ρg...,
+                    @stress(stokes)...,
+                    ητ,
+                    pt_stokes.ηdτ,
+                    _di...,
+                )
+                update_halo!(@velocity(stokes)...)
+            end
+            # apply_free_slip!(flow_bc, stokes.V.Vx, stokes.V.Vy, stokes.V.Vz)
+            flow_bcs!(stokes, flow_bc, di)
+        end
+
+        iter += 1
+        if iter % nout == 0 && iter > 1
+            cont += 1
+            push!(norm_Rx, maximum(abs.(stokes.R.Rx)))
+            push!(norm_Ry, maximum(abs.(stokes.R.Ry)))
+            push!(norm_Rz, maximum(abs.(stokes.R.Rz)))
+            push!(norm_∇V, maximum(abs.(stokes.R.RP)))
+            err = max(norm_Rx[cont], norm_Ry[cont], norm_Rz[cont], norm_∇V[cont])
+            push!(err_evo1, err)
+            push!(err_evo2, iter)
+            if igg.me == 0 && (verbose  || iter == iterMax)
+                @printf(
+                    "iter = %d, err = %1.3e [norm_Rx=%1.3e, norm_Ry=%1.3e, norm_Rz=%1.3e, norm_∇V=%1.3e] \n",
+                    iter,
+                    err,
+                    norm_Rx[cont],
+                    norm_Ry[cont],
+                    norm_Rz[cont],
+                    norm_∇V[cont]
+                )
+            end
+            isnan(err) && error("NaN(s)")
+        end
+
+        if igg.me == 0 && err ≤ ϵ
+            println("Pseudo-transient iterations converged in $iter iterations")
+        end
+    end
+
+    av_time = wtime0 / (iter - 1) # average time per iteration
+    update_τ_o!(stokes) # copy τ into τ_o
+
+    return (
+        iter=iter,
+        err_evo1=err_evo1,
+        err_evo2=err_evo2,
+        norm_Rx=norm_Rx,
+        norm_Ry=norm_Ry,
+        norm_Rz=norm_Rz,
+        norm_∇V=norm_∇V,
+        time=wtime0,
+        av_time=av_time,
+    )
+end
+
+## HELPER FUNCTIONS ---------------------------
+
+@inline Base.@propagate_inbounds _gather_yz(A, i, j, k) = A[i, j, k], A[i    , j + 1, k], A[i, j    , k + 1], A[i    , j + 1, k + 1]
+@inline Base.@propagate_inbounds _gather_xz(A, i, j, k) = A[i, j, k], A[i + 1, j    , k], A[i, j    , k + 1], A[i + 1, j    , k + 1]
+@inline Base.@propagate_inbounds _gather_xy(A, i, j, k) = A[i, j, k], A[i + 1, j    , k], A[i, j + 1, k    ], A[i + 1, j + 1, k    ]
+@inline Base.@propagate_inbounds _av(T, i, j, k) = 0.125 * (
+    T[i, j, k  ] + T[i, j+1, k  ] + T[i+1, j, k  ] + T[i+1, j+1, k  ] +
+    T[i, j, k+1] + T[i, j+1, k+1] + T[i+1, j, k+1] + T[i+1, j+1, k+1]
+)
+
+@parallel_indices (i, j, k) function compute_τ_new!(
+    τxx,
+    τyy,
+    τzz,
+    τyz,
+    τxz,
+    τxy,
+    TII,
+    τxx_old,
+    τyy_old,
+    τzz_old,
+    τyzv_old,
+    τxzv_old,
+    τxyv_old,
+    εxx,
+    εyy,
+    εzz,
+    εyzv,
+    εxzv,
+    εxyv,
+    P,
+    η,
+    η_vep,
+    phase_ratios,
+    rheology,
+    dt,
+    θ_dτ,
+)
+
+    # convinience closures
+    @inline gather_yz(A) = _gather_yz(A, i, j, k)
+    @inline gather_xz(A) = _gather_xz(A, i, j, k)
+    @inline gather_xy(A) = _gather_xy(A, i, j, k)
+    @inline function cache_tensor(xx, yy, zz, yz, xz, xy) 
+        xx[i, j, k], yy[i, j, k], zz[i, j, k], yz[i, j, k], xz[i, j, k], xy[i, j, k]
+    end
+    @inline function cache_tensor_stagg(xx, yy, zz, yz, xz, xy) 
+        xx[i, j, k], yy[i, j, k], zz[i, j, k], 0.25 * sum(gather_yz(yz)), 0.25 * sum(gather_xz(xz)), 0.25 * sum(gather_xy(xy))
+    end
+
+    # some coefficients
+    Val6  = Val(6)
+    G     = fn_ratio(get_G, rheology, phase_ratios[i, j, k])
+    _Gdt  = inv(G * dt)
+    ηij   = η[i, j, k]
+    η_e   = ηij * _Gdt
+    dτ_r  = inv(θ_dτ + η_e + 1.0)
+
+    # cache out tensors
+    εij_p   = cache_tensor_stagg(εxx, εyy, εzz, εyzv, εxzv, εxyv) 
+    τij_p_o = cache_tensor_stagg(τxx_old, τyy_old, τzz_old, τyzv_old, τxzv_old, τxyv_old)
+    τij     = cache_tensor(τxx, τyy, τzz, τyz, τxz, τxy)
+
+    # Compute stress increments
+    dτ = ntuple(Val6) do i 
+        dτ_r * (-(τij[i] - τij_p_o[i]) * η_e - τij[i] + 2.0 * ηij * (εij_p[i]))
+    end
+    # Trial stress
+    τII_trial             = second_invariant((dτ .+ τij)...)
+    # get plastic parameters from GeoParams
+    is_pl, C, sinϕ, η_reg = plastic_params_phase(rheology, phase_ratios[i, j, k])
+    # yield stress
+    τy                    = C + P[i, j, k] * sinϕ 
+    
+    if is_pl && τII_trial > abs(τy) # entering plasc domain
+
+        # yield function
+        F           = τII_trial - C - P[i, j, k] * sinϕ
+        λ           = (F>0.0) * F * inv((inv(inv(ηij) + _Gdt) + η_reg) )
+        # Partials of plastic potential
+        λ_τII_trial = 0.5 * inv(τII_trial) * λ
+        λdQdτ = ntuple(Val6) do i 
+            (τij[i] + dτ[i]) * λ_τII_trial
+        end
+        # corrected stress increment
+        dτ_pl = ntuple(Val6) do i 
+            dτ_r * (-(τij[i] - τij_p_o[i]) * η_e - τij[i] + 2.0 * ηij * (εij_p[i] - λdQdτ[i]))
+        end
+        # update stress 
+        τij_corrected  = dτ_pl + τij
+        τxx[i, j, k]   = τij_corrected[1]
+        τyy[i, j, k]   = τij_corrected[2]
+        τzz[i, j, k]   = τij_corrected[3]
+        τyz[i, j, k]   = τij_corrected[4]
+        τxz[i, j, k]   = τij_corrected[5]
+        τxy[i, j, k]   = τij_corrected[6]
+        # visco-elastic strain rates
+        ε_ve           = ntuple(i-> εij_p[i] + 0.5 * τij_p_o[i] * _Gdt, Val6)
+        εII_ve         = second_invariant(ε_ve...)
+        τII            = second_invariant(τij_corrected...)
+        η_vep[i, j, k] = ifelse(iszero(εII_ve), ηij, τII * 0.5 * inv(εII_ve))
+        TII[i,j,k]     = τII
+
+    else # we are in the non-plastic domain, business as usual
+
+        τij_corrected  = dτ + τij
+        τxx[i, j, k]   = τij_corrected[1]
+        τyy[i, j, k]   = τij_corrected[2]
+        τzz[i, j, k]   = τij_corrected[3]
+        τyz[i, j, k]   = τij_corrected[4]
+        τxz[i, j, k]   = τij_corrected[5]
+        τxy[i, j, k]   = τij_corrected[6]
+        η_vep[i, j, k] = ηij
+        TII[i,j,k]     = second_invariant(τij_corrected...)
+
+    end
+            
+    return nothing
+end
+
+# Viscosity with GeoParams
+
+@parallel_indices (i, j, k) function compute_viscosity!(η, ν, ratios_center, εxx, εyy, εzz, εyzv, εxzv, εxyv, args, rheology)
+
+    # convinience closures
+    av_T()       = _av(args.T, i, j, k)
+    gather_yz(A) = _gather_yz(A, i, j, k)
+    gather_xz(A) = _gather_xz(A, i, j, k)
+    gather_xy(A) = _gather_xy(A, i, j, k)
+    
+    εII_0 = (εxx[i, j, k] == 0 && εyy[i, j, k] == 0 && εzz[i, j, k] == 0) ? 1e-15 : 0.0
+    _zeros = (0.0, 0.0, 0.0, 0.0)
+    ratio_ij = ratios_center[i, j, k]
+    args_ij  = (; dt = args.dt, P = args.P[i, j, k],  T=av_T(), τII_old=0.0)
+    εij_p = (
+        εxx[i, j, k] + εII_0, 
+        εyy[i, j, k] - εII_0 * 0.5, 
+        εzz[i, j, k] - εII_0 * 0.5, 
+        gather_yz(εyzv), 
+        gather_xz(εxzv), 
+        gather_xy(εxyv)
+    )
+    τij_p_o  = (
+        0.0, 
+        0.0, 
+        0.0, 
+        _zeros,
+        _zeros,
+        _zeros
+    )
+    # update stress and effective viscosity
+    _, _, ηi   = compute_τij_ratio(rheology, ratio_ij, εij_p, args_ij, τij_p_o)
+    # if isnan(ηi) || isinf(ηi) || ηi < 0.0
+    #     @show ηi, εij_p, ratio_ij
+    # end
+    
+    ηi         = exp((1-ν)*log(η[i, j, k]) + ν*log(ηi))
+    η[i, j, k] = clamp(ηi, 1e16, 1e24)
+    
+    return nothing
+end
+
+function compute_τij_ratio(rheology::NTuple{N,AbstractMaterialParamsStruct}, ratio, εij_p, args_ij, τij_p_o) where N
+    data = compute_phase_τij(rheology, ratio, εij_p, args_ij, τij_p_o)
+    # average over phases
+    τij =  (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    τII = 0.0
+    η_eff = 0.0
+    for n in 1:N
+        τij    = @. data[n][1] * ratio[n] + τij
+        τII   +=    data[n][2] * ratio[n]
+        η_eff +=    data[n][3] * ratio[n]
+    end
+    return τij, τII, η_eff
+end
+
+@generated function compute_phase_τij(rheology::NTuple{N,AbstractMaterialParamsStruct}, ratio, εij_p, args_ij, τij_p_o) where N
+    quote
+        Base.@_inline_meta 
+        empty_args = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0), 0.0, 0.0
+        Base.@nexprs $N i -> a_i = ratio[i] == 0 ? empty_args : compute_τij(rheology[i].CompositeRheology[1], εij_p, args_ij, τij_p_o) 
+        Base.@ncall $N tuple a
+    end
+end
+
+# Buoyancy forces with GeoParams
+
+@parallel_indices (i, j, k) function compute_ρg!(ρg, phase_ratios, rheology, args)
+
+    av_T() = _av(args.T, i, j, k) - 273.0
+
+    ρg[i, j, k] = -compute_density_ratio(phase_ratios[i, j, k], rheology, (; T = av_T(), P=args.P[i, j, k])) *
+        compute_gravity(rheology[1])
+    return nothing
+end
+
+# Extract plastic parameters from `rheology`
+
+function plastic_params_phase(rheology::NTuple{N,AbstractMaterialParamsStruct}, ratio) where N
+    data = _plastic_params_phase(rheology, ratio)
+    # average over phases
+    is_pl = false
+    C = 0.0
+    sinϕ = 0.0
+    η_reg = 0.0
+    for n in 1:N
+        data[n][1] && (is_pl = true)
+        C += data[n][2] * ratio[n]
+        sinϕ += data[n][3] * ratio[n]
+        η_reg += data[n][4] * ratio[n]
+    end
+    return is_pl, C, sinϕ, η_reg
+end
+
+@generated function plastic_params(v::NTuple{N, Any}) where N
+    quote
+        Base.@_inline_meta
+        Base.@nexprs $N i -> isplastic(v[i]) && return true, v[i].C.val, v[i].sinϕ.val, v[i].η_vp.val
+        (false, 0.0, 0.0, 0.0)
+    end
+end
+
+@inline isplastic(x::AbstractPlasticity) = true
+@inline isplastic(x) = false
+@inline plastic_params(v) = plastic_params(v.CompositeRheology[1].elements)
+
+@generated function _plastic_params_phase(rheology::NTuple{N,AbstractMaterialParamsStruct}, ratio) where N
+    quote
+        Base.@_inline_meta 
+        empty_args =  (false, 0.0, 0.0, 0.0)
+        Base.@nexprs $N i -> a_i = ratio[i] == 0 ? empty_args : plastic_params(rheology[i]) 
+        Base.@ncall $N tuple a
+    end
 end
 
 end # END OF MODULE

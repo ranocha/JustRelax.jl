@@ -1232,15 +1232,6 @@ end
     return nothing
 end
 
-@generated function compute_phase_τij(MatParam::NTuple{N,AbstractMaterialParamsStruct}, ratio, εij_p, args_ij, τij_p_o) where N
-    quote
-        Base.@_inline_meta 
-        empty_args = (0.0, 0.0, 0.0), 0.0, 0.0
-        Base.@nexprs $N i -> a_i = ratio[i] == 0 ? empty_args : compute_τij(MatParam[i].CompositeRheology[1], εij_p, args_ij, τij_p_o) 
-        Base.@ncall $N tuple a
-    end
-end
-
 function compute_τij_ratio(MatParam::NTuple{N,AbstractMaterialParamsStruct}, ratio, εij_p, args_ij, τij_p_o) where N
     data = compute_phase_τij(MatParam, ratio, εij_p, args_ij, τij_p_o)
     # average over phases
@@ -1255,6 +1246,14 @@ function compute_τij_ratio(MatParam::NTuple{N,AbstractMaterialParamsStruct}, ra
     return τij, τII, η_eff
 end
 
+@generated function compute_phase_τij(MatParam::NTuple{N,AbstractMaterialParamsStruct}, ratio, εij_p, args_ij, τij_p_o) where N
+    quote
+        Base.@_inline_meta 
+        empty_args = (0.0, 0.0, 0.0), 0.0, 0.0
+        Base.@nexprs $N i -> a_i = ratio[i] == 0 ? empty_args : compute_τij(MatParam[i].CompositeRheology[1], εij_p, args_ij, τij_p_o) 
+        Base.@ncall $N tuple a
+    end
+end
 
 @inline isplastic(x::AbstractPlasticity) = true
 @inline isplastic(x) = false
