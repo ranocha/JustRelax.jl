@@ -89,27 +89,9 @@ end
 #     # iterate over neighbouring (child) cells
 #     for j in -1:1, i in -1:1
 #         idx_loop = (i, j)
-#         __shuffle_particles_vertex!(
+#         shuffle_kernel!(
 #             particle_coords, corner_xi, dxi, nxi, index, parent_cell, args, idx_loop
 #         )
-#     end
-
-#     return nothing
-# end
-
-# function _shuffle_particles_vertex!(
-#     particle_coords, grid, dxi, nxi, index, parent_cell::NTuple{3,Int64}, args
-# )
-#     # coordinate of the lower-most-left coordinate of the parent cell 
-#     corner_xi = corner_coordinate(grid, parent_cell)
-#     # iterate over neighbouring (child) cells
-#     for k in -1:1, j in -1:1, i in -1:1
-#         idx_loop = (i, j, k)
-#         if idx_loop != (0,0,0)
-#             __shuffle_particles_vertex!(
-#                 particle_coords, corner_xi, dxi, nxi, index, parent_cell, args, idx_loop
-#             )
-#         end
 #     end
 
 #     return nothing
@@ -125,7 +107,7 @@ end
 #         if $N==2
 #             for j in -1:1, i in -1:1
 #                 idx_loop = (i, j)
-#                 __shuffle_particles_vertex!(
+#                 shuffle_kernel!(
 #                     particle_coords, corner_xi, dxi, nxi, index, parent_cell, args, idx_loop
 #                 )
 #             end
@@ -134,7 +116,7 @@ end
 #             for k in -1:1, j in -1:1, i in -1:1
 #                 idx_loop = (i, j, k)
 #                 if idx_loop != (0,0,0)
-#                     __shuffle_particles_vertex!(
+#                     shuffle_kernel!(
 #                         particle_coords, corner_xi, dxi, nxi, index, parent_cell, args, idx_loop
 #                     )
 #                 end
@@ -146,16 +128,16 @@ end
 # end
 
 function _shuffle_particles_vertex!(
-    particle_coords, grid, dxi, nxi, index, parent_cell::NTuple{2,Int64}, args
+    particle_coords, grid, dxi, nxi, index, parent_cell::NTuple{2,Integer}, args
 ) 
     # coordinate of the lower-most-left coordinate of the parent cell 
     # iterate over neighbouring (child) cells
     corner_xi = corner_coordinate(grid, parent_cell)
     domain_limits = ntuple(i->extrema(grid[i]), Val(2)) 
     for j in -1:1, i in -1:1
-        if (i, j) != (0,0)
-            idx_loop = (i, j)
-            __shuffle_particles_vertex!(
+        idx_loop = (i, j)
+        if idx_loop != (0, 0)
+            shuffle_kernel!(
                 particle_coords, domain_limits, corner_xi, dxi, nxi, index, parent_cell, args, idx_loop
             )
         end
@@ -164,7 +146,25 @@ function _shuffle_particles_vertex!(
     return nothing
 end
 
-function __shuffle_particles_vertex!(
+function _shuffle_particles_vertex!(
+    particle_coords, grid, dxi, nxi, index, parent_cell::NTuple{3,Integer}, args
+)
+    # coordinate of the lower-most-left coordinate of the parent cell 
+    corner_xi = corner_coordinate(grid, parent_cell)
+    # iterate over neighbouring (child) cells
+    for k in -1:1, j in -1:1, i in -1:1
+        idx_loop = (i, j, k)
+        if idx_loop != (0, 0, 0)
+            shuffle_kernel!(
+                particle_coords, domain_limits, corner_xi, dxi, nxi, index, parent_cell, args, idx_loop
+            )
+        end
+    end
+
+    return nothing
+end
+
+function shuffle_kernel!(
     particle_coords,
     domain_limits,
     corner_xi,
@@ -175,8 +175,9 @@ function __shuffle_particles_vertex!(
     args::NTuple{N2,T},
     idx_loop::NTuple{N1,Int64},
 ) where {N1,N2,T}
+
     idx_child = child_index(parent_cell, idx_loop)
-    # ignore parent cell and "ghost" cells outside the domain
+
     @inbounds if indomain(idx_child, nxi)
 
         # iterate over particles in child cell 
@@ -220,27 +221,32 @@ function __shuffle_particles_vertex!(
     end
 end
 
-function find_free_memory(index, I::Vararg{Int64, N}) where {N}
+function find_free_memory(index, I::Vararg{Int, N}) where {N}
     for i in cellaxes(index)
         !(@cell(index[i, I...])) && return i
     end
     return 0
 end
 
-# @generated function indomain(p::NTuple{N,T}, domain_limits) where {N, T}
-#     quote
-#         Base.@_inline_meta
-#         Base.Cartesian.@nexprs $N i -> (
-#             @inbounds (domain_limits[i][1] > p[i]) && return false;
-#             @inbounds (p[i] > domain_limits[i][2]) && return false
-#         )
-#         return true
-#     end
+@generated function indomain(p::NTuple{N,T1}, domain_limits::NTuple{N,T2}) where {N, T1, T2}
+    quote
+        Base.@_inline_meta
+        Base.Cartesian.@nexprs $N i -> (
+            @inbounds (domain_limits[i][1] > p[i]) && return false;
+            @inbounds (p[i] > domain_limits[i][2]) && return false
+        )
+        return true
+    end
+end
+
+# function indomain(p::NTuple{2, T}, domain_limits) where T
+#     (p[1] ≥ domain_limits[1][1]) * 
+#     (p[1] ≤ domain_limits[1][2]) * 
+#     (p[2] ≥ domain_limits[2][1]) * 
+#     (p[2] ≤ domain_limits[2][2])
 # end
 
-function indomain(p::NTuple{N,T}, domain_limits) where {N, T}
-    (p[1] ≥ domain_limits[1][1]) * (p[1] ≤ domain_limits[1][2]) * (p[2] ≥ domain_limits[2][1]) * (p[2] ≤ domain_limits[2][2])
-end
+# indomain(p::NTuple{N, T}, domain_limits) where {N, T} = mapreduce(x -> (x[1] ≥ x[2][1]) * (x[1] ≤ x[2][2]), *, zip(p, domain_limits))
 
 @generated function indomain(idx_child::NTuple{N,Integer}, nxi::NTuple{N,Integer}) where {N}
     quote
@@ -260,14 +266,10 @@ end
 end
 
 @inline function cache_args(args::NTuple{N1,T}, ip, I::NTuple{N2,Int64}) where {T,N1,N2}
-    # return ntuple(i -> @inbounds(args[i][ip, I...]), Val(N1))
-    return ntuple(Val(N1)) do i
-        tmp = args[i] 
-        @cell(tmp[ip, I...])
-    end
+    return ntuple(i ->  @cell(args[i][ip, I...]), Val(N1))
 end
 
-cache_particle(p::NTuple{N1,T}, ip, I::NTuple{N2,Int64}) where {T,N1,N2} = cache_args(p, ip, I)
+@inline cache_particle(p::NTuple{N1,T}, ip, I::NTuple{N2,Int64}) where {T,N1,N2} = cache_args(p, ip, I)
 
 @inline function child_index(parent_cell::NTuple{N,Int64}, I::NTuple{N,Int64}) where {N}
     return ntuple(i -> parent_cell[i] + I[i], Val(N))
@@ -276,10 +278,7 @@ end
 @generated function empty_particle!(p::NTuple{N1,T}, ip, I::NTuple{N2,Int64}) where {N1, N2, T}
     quote
         Base.@_inline_meta
-        Base.Cartesian.@nexprs $N1 i -> (
-            tmp=p[i]; 
-            (@cell tmp[ip, I...]=NaN);
-        )
+        Base.Cartesian.@nexprs $N1 i -> @cell p[i][ip, I...] = NaN
         # Base.Cartesian.@nexprs $N1 i -> @inbounds p[i][ip, I...] = NaN
     end
 end
