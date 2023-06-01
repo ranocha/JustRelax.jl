@@ -2,6 +2,7 @@ using CellArrays, StaticArrays
 
 @inline cellnum(A::CellArray) = prod(cellsize(A))
 @inline cellaxes(A) = map(Base.oneto, cellnum(A))
+@inline new_empty_cell(A::CellArray{T, N}) where {T,N} = zeros(T)
 
 """
     element(A, element_indices..., cell_indices...)
