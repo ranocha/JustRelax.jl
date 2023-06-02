@@ -1,8 +1,8 @@
 @inline function parent_cell(
-    p::NTuple{N,A}, dxi::NTuple{N,B}, xci::NTuple{N,B}
+    p::NTuple{N,A}, di::NTuple{N,B}, xci::NTuple{N,B}
 ) where {N,A,B}
     ni = length.(xci)
-    return ntuple(i -> min(Int((p[i] - xci[i]) ÷ dxi[i] + 1), ni[i]), Val(N))
+    return ntuple(i -> min(Int((p[i] - xci[i]) ÷ di[i] + 1), ni[i]), Val(N))
 end
 
 # dimension-agnostic fully unrolled euclidean distance
@@ -41,16 +41,16 @@ end
 
 # normalize coordinates
 @inline function normalize_coordinates(
-    p::NTuple{N,A}, xi::NTuple{N,B}, dxi::NTuple{N,C}, idx::NTuple{N,D}
+    p::NTuple{N,A}, xi::NTuple{N,B}, di::NTuple{N,C}, idx::NTuple{N,D}
 ) where {N,A,B,C,D}
-    return ntuple(i -> (p[i] - xi[i][idx[i]]) * inv(dxi[i]), Val(N))
+    return ntuple(i -> (p[i] - xi[i][idx[i]]) * inv(di[i]), Val(N))
 end
 
 # normalize coordinates
 @inline function normalize_coordinates(
-    p::NTuple{N,A}, xci::NTuple{N,B}, dxi::NTuple{N,C}
+    p::NTuple{N,A}, xci::NTuple{N,B}, di::NTuple{N,C}
 ) where {N,A,B,C}
-    return ntuple(i -> (p[i] - xci[i]) * inv(dxi[i]), Val(N))
+    return ntuple(i -> (p[i] - xci[i]) * inv(di[i]), Val(N))
 end
 
 # compute grid size
@@ -118,12 +118,12 @@ end
 end
 
 @inline function field_centers(
-    F::AbstractArray{T,3}, pxi, xi, dxi, idx::NTuple{3,Integer}
+    F::AbstractArray{T,3}, pxi, xi, di, idx::NTuple{3,Integer}
 ) where {T}
     # unpack
     idx_x, idx_y, idx_z = idx
     px, py, pz = pxi
-    dx, dy, dz = dxi
+    dx, dy, dz = di
     x, y, z = xi[1][idx_x], xi[2][idx_x], xi[3][idx_x]
     # compute offsets and corrections
     offset_x = (px - x) > 0 ? 1 : 0

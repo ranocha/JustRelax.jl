@@ -9,7 +9,7 @@ function _vscattering(p::NTuple{3,A}, xi::NTuple{3,B}, F::Array{Float64,3}) wher
 
     # indices of lowermost-left corner of the cell 
     # containing the particle
-    idx_x, idx_y, idx_z = parent_cell(p, dxi)
+    idx_x, idx_y, idx_z = parent_cell(p, di)
 
     # distance from particle to lowermost-left corner of the cell 
     dx_particle = px - x[idx_x]
@@ -66,7 +66,7 @@ function _vscattering(p::NTuple{3,A}, xi::NTuple{3,B}, F::Array{Float32,3}) wher
 
     # indices of lowermost-left corner of the cell 
     # containing the particle
-    idx_x, idx_y, idx_z = parent_cell(p, dxi)
+    idx_x, idx_y, idx_z = parent_cell(p, di)
 
     # distance from particle to lowermost-left corner of the cell 
     dx_particle = px - x[idx_x]
@@ -106,10 +106,10 @@ function _vscattering(p::NTuple{3,A}, xi::NTuple{3,B}, F::Array{Float32,3}) wher
 end
 
 function _scattering(
-    p::NTuple{3,A}, dxi::NTuple{3,A}, xi::NTuple{3,B}, F::Array{C,3}
+    p::NTuple{3,A}, di::NTuple{3,A}, xi::NTuple{3,B}, F::Array{C,3}
 ) where {A,B,C}
     # unpack tuples
-    dx, dy, dz = dxi
+    dx, dy, dz = di
     px, py, pz = p
     x, y, z = xi
 
@@ -118,7 +118,7 @@ function _scattering(
 
     # indices of lowermost-left corner of the cell 
     # containing the particle
-    idx_x, idx_y, idx_z = parent_cell(p, dxi)
+    idx_x, idx_y, idx_z = parent_cell(p, di)
 
     # distance from particle to lowermost-left corner of the cell 
     tx = (px - x[idx_x]) / dx
@@ -144,14 +144,14 @@ end
 
 function scattering(xi, F::Array{T,3}, particle_coords) where {T}
     # unpack tuples
-    dxi = grid_size(xi)
+    di = grid_size(xi)
     np = length(particle_coords[1])
     Fp = zeros(T, np)
 
     Threads.@threads for i in 1:np
         @inbounds Fp[i] = _scattering(
             (particle_coords[1][i], particle_coords[2][i], particle_coords[3][i]),
-            dxi,
+            di,
             xi,
             F,
         )
@@ -163,13 +163,13 @@ end
 function scattering!(Fp, xi, F::Array{T,3}, particle_coords) where {T}
     # unpack tuples
     x, y, z = xi
-    dxi = (x[2] - x[1], y[2] - y[1], z[2] - z[1])
+    di = (x[2] - x[1], y[2] - y[1], z[2] - z[1])
     np = length(particle_coords[1])
 
     Threads.@threads for i in 1:np
         @inbounds Fp[i] = _scattering(
             (particle_coords[1][i], particle_coords[2][i], particle_coords[3][i]),
-            dxi,
+            di,
             xi,
             F,
         )
@@ -181,14 +181,14 @@ end
 function _scattering!(
     Fp::CuDeviceVector{T,1},
     p::NTuple{3,CuDeviceVector{T,1}},
-    dxi::NTuple{3,T},
+    di::NTuple{3,T},
     xi::NTuple{3,A},
     F::CuDeviceArray{T,3},
 ) where {A,T}
     ix = (blockIdx().x - 1) * blockDim().x + threadIdx().x
 
     # unpack tuples
-    dx, dy, dz = dxi
+    dx, dy, dz = di
     px, py, pz = p
     x, y, z = xi
 
@@ -199,7 +199,7 @@ function _scattering!(
 
         # indices of lowermost-left corner of the cell 
         # containing the particle
-        idx_x, idx_y, idx_z = parent_cell((px[ix], py[ix], pz[ix]), dxi)
+        idx_x, idx_y, idx_z = parent_cell((px[ix], py[ix], pz[ix]), di)
 
         # # distance from particle to lowermost-left corner of the cell 
         tx = (px[ix] - x[idx_x]) / dx
@@ -229,14 +229,14 @@ function scattering(
     xi, Fd::CuArray{T,3}, particle_coords::NTuple{3,CuArray}; nt=512
 ) where {T}
     x, y, z = xi
-    dxi = (x[2] - x[1], y[2] - y[1], z[2] - z[1])
+    di = (x[2] - x[1], y[2] - y[1], z[2] - z[1])
     N = length(particle_coords[1])
     Fpd = CuArray{T,1}(undef, N)
 
     numblocks = ceil(Int, N / nt)
     CUDA.@sync begin
         @cuda threads = nt blocks = numblocks _scattering!(
-            Fpd, particle_coords, dxi, xi, Fd
+            Fpd, particle_coords, di, xi, Fd
         )
     end
 
@@ -247,12 +247,12 @@ function scattering!(
     Fpd, xi, Fd::CuArray{T,3}, particle_coords::NTuple{3,CuArray}; nt=512
 ) where {T}
     x, y, z = xi
-    dxi = (x[2] - x[1], y[2] - y[1], z[2] - z[1])
+    di = (x[2] - x[1], y[2] - y[1], z[2] - z[1])
     N = length(particle_coords[1])
     numblocks = ceil(Int, N / nt)
     CUDA.@sync begin
         @cuda threads = nt blocks = numblocks _scattering!(
-            Fpd, particle_coords, dxi, xi, Fd
+            Fpd, particle_coords, di, xi, Fd
         )
     end
 end

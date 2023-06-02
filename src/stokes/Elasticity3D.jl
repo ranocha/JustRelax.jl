@@ -1006,8 +1006,8 @@ function JustRelax.solve!(
 
             # Update viscosity
             args_ηv = (; T = thermal.T, P = stokes.P, dt=Inf)
-            ν = iter > 1 ? 0.5 : 1.0
-            @parallel (@idx ni) compute_viscosity!(η, ν, phase_ratios.center, @strain(stokes)..., args_ηv, rheology)
+            ν = iter > 1 ? 0.1 : 1.0
+            @parallel (@idx ni) compute_viscosity!(η, 0.1, phase_ratios.center, @strain(stokes)..., args_ηv, rheology)
             @hide_communication b_width begin # communication/computation overlap
                 @parallel compute_maxloc!(ητ, η)
                 update_halo!(ητ)
@@ -1236,13 +1236,13 @@ end
             dτ_r * (-(τij[i] - τij_p_o[i]) * η_e - τij[i] + 2.0 * ηij * (εij_p[i] - λdQdτ[i]))
         end
         # update stress 
-        τij_corrected  = dτ_pl + τij
-        τxx[i, j, k]   = τij_corrected[1]
-        τyy[i, j, k]   = τij_corrected[2]
-        τzz[i, j, k]   = τij_corrected[3]
-        τyz[i, j, k]   = τij_corrected[4]
-        τxz[i, j, k]   = τij_corrected[5]
-        τxy[i, j, k]   = τij_corrected[6]
+        τij_corrected  = dτ_pl .+ τij
+        τxx[i, j, k]  += τij_corrected[1]
+        τyy[i, j, k]  += τij_corrected[2]
+        τzz[i, j, k]  += τij_corrected[3]
+        τyz[i, j, k]  += τij_corrected[4]
+        τxz[i, j, k]  += τij_corrected[5]
+        τxy[i, j, k]  += τij_corrected[6]
         # visco-elastic strain rates
         ε_ve           = ntuple(i-> εij_p[i] + 0.5 * τij_p_o[i] * _Gdt, Val6)
         εII_ve         = second_invariant(ε_ve...)
@@ -1252,13 +1252,13 @@ end
 
     else # we are in the non-plastic domain, business as usual
 
-        τij_corrected  = dτ + τij
-        τxx[i, j, k]   = τij_corrected[1]
-        τyy[i, j, k]   = τij_corrected[2]
-        τzz[i, j, k]   = τij_corrected[3]
-        τyz[i, j, k]   = τij_corrected[4]
-        τxz[i, j, k]   = τij_corrected[5]
-        τxy[i, j, k]   = τij_corrected[6]
+        τij_corrected  = dτ .+ τij
+        τxx[i, j, k]  += τij_corrected[1]
+        τyy[i, j, k]  += τij_corrected[2]
+        τzz[i, j, k]  += τij_corrected[3]
+        τyz[i, j, k]  += τij_corrected[4]
+        τxz[i, j, k]  += τij_corrected[5]
+        τxy[i, j, k]  += τij_corrected[6]
         η_vep[i, j, k] = ηij
         TII[i,j,k]     = second_invariant(τij_corrected...)
 
@@ -1277,7 +1277,7 @@ end
     gather_xz(A) = _gather_xz(A, i, j, k)
     gather_xy(A) = _gather_xy(A, i, j, k)
     
-    εII_0 = (εxx[i, j, k] == 0 && εyy[i, j, k] == 0 && εzz[i, j, k] == 0) ? 1e-15 : 0.0
+    εII_0 = (εxx[i, j, k] == 0 && εyy[i, j, k] == 0 && εzz[i, j, k] == 0) ? 1e-18 : 0.0
     _zeros = (0.0, 0.0, 0.0, 0.0)
     ratio_ij = ratios_center[i, j, k]
     args_ij  = (; dt = args.dt, P = args.P[i, j, k],  T=av_T(), τII_old=0.0)
@@ -1298,11 +1298,7 @@ end
         _zeros
     )
     # update stress and effective viscosity
-    _, _, ηi   = compute_τij_ratio(rheology, ratio_ij, εij_p, args_ij, τij_p_o)
-    # if isnan(ηi) || isinf(ηi) || ηi < 0.0
-    #     @show ηi, εij_p, ratio_ij
-    # end
-    
+    _, _, ηi   = compute_τij_ratio(rheology, ratio_ij, εij_p, args_ij, τij_p_o)    
     ηi         = exp((1-ν)*log(η[i, j, k]) + ν*log(ηi))
     η[i, j, k] = clamp(ηi, 1e16, 1e24)
     
@@ -1312,7 +1308,7 @@ end
 function compute_τij_ratio(rheology::NTuple{N,AbstractMaterialParamsStruct}, ratio, εij_p, args_ij, τij_p_o) where N
     data = compute_phase_τij(rheology, ratio, εij_p, args_ij, τij_p_o)
     # average over phases
-    τij =  (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    τij = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     τII = 0.0
     η_eff = 0.0
     for n in 1:N
@@ -1349,13 +1345,11 @@ function plastic_params_phase(rheology::NTuple{N,AbstractMaterialParamsStruct}, 
     data = _plastic_params_phase(rheology, ratio)
     # average over phases
     is_pl = false
-    C = 0.0
-    sinϕ = 0.0
-    η_reg = 0.0
+    C, sinϕ, η_reg = 0.0, 0.0, 0.0
     for n in 1:N
         data[n][1] && (is_pl = true)
-        C += data[n][2] * ratio[n]
-        sinϕ += data[n][3] * ratio[n]
+        C     += data[n][2] * ratio[n]
+        sinϕ  += data[n][3] * ratio[n]
         η_reg += data[n][4] * ratio[n]
     end
     return is_pl, C, sinϕ, η_reg

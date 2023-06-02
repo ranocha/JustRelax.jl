@@ -53,16 +53,16 @@ end
 ## 3D SPECIFIC FUNCTIONS 
 
 # Main Runge-Kutta 2 advection function for 3D staggered grids
+
 function advection_RK2!(
     particles::Particles, V, grid_vx::NTuple{3,T}, grid_vy::NTuple{3,T}, grid_vz::NTuple{3,T}, dt, α
 ) where {T}
     # unpack 
-    (; coords, index, max_xcell) = particles
-    px, = coords
+    (; coords, index) = particles
     # compute some basic stuff
-    dxi = compute_dx(grid_vx)
-   
-    nx, ny, nz = size(px)
+    dxi = compute_dx(grid_vx)   
+    nx, ny, nz = size(index)
+
     # Need to transpose grid_vy and Vy to reuse interpolation kernels
     grid_vi = grid_vx, grid_vy, grid_vz
     # launch parallel advection kernel
@@ -77,16 +77,16 @@ end
 @parallel_indices (icell, jcell, kcell) function _advection_RK2!(
     p,
     V::NTuple{3, T},
-    index::AbstractArray,
+    index,
     grid,
     dxi,
     dt,
     α,
 ) where T
     px, py, pz = p
-
+    nx, ny, nz = size(index)
     for ipart in cellaxes(px)
-        if icell ≤ size(px, 1) && jcell ≤ size(px, 2) && kcell ≤ size(px, 3) && @cell(index[ipart, icell, jcell, kcell])
+        if icell ≤ nx && jcell ≤ ny && kcell ≤ nz && @cell(index[ipart, icell, jcell, kcell])
             pᵢ = (
                 @cell(px[ipart, icell, jcell, kcell]),
                 @cell(py[ipart, icell, jcell, kcell]),
@@ -129,7 +129,7 @@ function advect_particle_RK2(
     idx::NTuple,
     α,
 ) where {T,N}
-    _α = inv(α)
+    _α   = inv(α)
     ValN = Val(N)
 
     # interpolate velocity to current location

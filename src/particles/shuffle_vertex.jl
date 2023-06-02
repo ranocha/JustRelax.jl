@@ -67,7 +67,7 @@ end
     offset_z,
     args,
 ) where {T}
-    nx, ny = nxi
+    nx, ny, nz = nxi
     i = 2 * (icell - 1) + offset_x
     j = 2 * (jcell - 1) + offset_y
     k = 2 * (kcell - 1) + offset_z
@@ -131,8 +131,8 @@ function _shuffle_particles_vertex!(
     particle_coords, grid, dxi, nxi, index, parent_cell::NTuple{2,Integer}, args
 ) 
     # coordinate of the lower-most-left coordinate of the parent cell 
-    # iterate over neighbouring (child) cells
     corner_xi = corner_coordinate(grid, parent_cell)
+    # iterate over neighbouring (child) cells
     domain_limits = ntuple(i->extrema(grid[i]), Val(2)) 
     for j in -1:1, i in -1:1
         idx_loop = (i, j)
@@ -151,6 +151,7 @@ function _shuffle_particles_vertex!(
 )
     # coordinate of the lower-most-left coordinate of the parent cell 
     corner_xi = corner_coordinate(grid, parent_cell)
+    domain_limits = ntuple(i->extrema(grid[i]), Val(3)) 
     # iterate over neighbouring (child) cells
     for k in -1:1, j in -1:1, i in -1:1
         idx_loop = (i, j, k)
@@ -296,32 +297,58 @@ end
     end
 end
 
-function clean_particles!(particles::Particles, grid::NTuple{2,T}, args) where {T}
-    # unpack
-    (; coords, index) = particles
-    
+function clean_particles!(particles::Particles, grid, args)
+    (; coords, index) = particles    
     dxi = compute_dx(grid)
-
-    @parallel (1:size(index, 1), 1:size(index, 2)) _clean!(
+    ni  = size(index)
+    @parallel (@idx ni) _clean!(
         coords, grid, dxi, index, args
     )
-
     return nothing
 end
 
-@parallel_indices (i, j) function _clean!(particle_coords, grid, dxi, index, args)
-    corner_xi = corner_coordinate(grid, (i, j))
+# @parallel_indices (i, j) function _clean!(particle_coords, grid, dxi, index, args)
+#     corner_xi = corner_coordinate(grid, (i, j))
+#     # iterate over particles in child cell 
+#     for ip in cellaxes(index)
+
+#         pᵢ = cache_particle(particle_coords, ip,  (i, j))
+
+#         if @cell index[ip, i, j] # true if memory allocation is filled with a particle
+#             if !(isincell(pᵢ, corner_xi, dxi))
+#                 # remove particle from child cell
+#                 @cell index[ip, i, j] = false
+#                 empty_particle!(particle_coords, ip,  (i, j))
+#                 empty_particle!(args, ip,  (i, j))
+#             end
+#         end
+#     end
+#     return
+# end
+
+@parallel_indices (i, j) function _clean!(particle_coords::NTuple{2, Any}, grid::NTuple{2, Any}, dxi::NTuple{2, Any}, index, args)
+    clean_kernel!(particle_coords, grid, dxi, index, args, i, j)
+    return
+end
+
+@parallel_indices (i, j, k) function _clean!(particle_coords::NTuple{3, Any}, grid::NTuple{3, Any}, dxi::NTuple{3, Any}, index, args)
+    clean_kernel!(particle_coords, grid, dxi, index, args, i, j, k)
+    return
+end
+
+function clean_kernel!(particle_coords, grid, dxi, index, args, cell_indices::Vararg{Int, N}) where {N}
+    corner_xi = corner_coordinate(grid, cell_indices...)
     # iterate over particles in child cell 
     for ip in cellaxes(index)
 
-        pᵢ = cache_particle(particle_coords, ip,  (i, j))
+        pᵢ = cache_particle(particle_coords, ip, cell_indices)
 
-        if @cell index[ip, i, j] # true if memory allocation is filled with a particle
+        if @cell index[ip, cell_indices...] # true if memory allocation is filled with a particle
             if !(isincell(pᵢ, corner_xi, dxi))
                 # remove particle from child cell
-                @cell index[ip, i, j] = false
-                empty_particle!(particle_coords, ip,  (i, j))
-                empty_particle!(args, ip,  (i, j))
+                @cell index[ip, cell_indices...] = false
+                empty_particle!(particle_coords, ip, cell_indices)
+                empty_particle!(args, ip, cell_indices)
             end
         end
     end

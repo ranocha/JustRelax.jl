@@ -103,6 +103,10 @@ end
     return ntuple(i -> grid[i][I[i]], Val(N))
 end
 
+@inline function corner_coordinate(grid::NTuple{N,T1}, I::Vararg{T2, N}) where {T1,T2,N}
+    return ntuple(i -> grid[i][I[i]], Val(N))
+end
+
 @inline function isincell(p::NTuple{2,T}, xci::NTuple{2,T}, dxi::NTuple{2,T}) where {T}
     px, py = p # particle coordinate
     xc, yc = xci # corner coordinate
@@ -161,23 +165,42 @@ end
 #     return isemptycell((icell, jcell), index, min_xcell)
 # end
 
+# @inline function isemptycell(
+#     icell::Integer, jcell::Integer, index::AbstractArray{T,N}, min_xcell::Integer
+# ) where {T,N}
+#     # first min_xcell particles
+#     # val = reduce(+, @cell(index[i, icell, jcell]) for i in 1:min_xcell)
+#     val = 0
+#     for i in 1:min_xcell
+#         val += @cell(index[i, icell, jcell])
+#     end
+#     # early escape
+#     val ≥ min_xcell && return false
+
+#     # tail
+#     n = cellnum(index)
+#     # val += reduce(+, @cell(index[i, icell, jcell]) for i in min_xcell+1:n)
+#     for i in min_xcell+1:n
+#         val += @cell(index[i, icell, jcell])
+#     end
+#     return val ≥ min_xcell ? false : true
+# end
+
 @inline function isemptycell(
-    icell::Integer, jcell::Integer, index::AbstractArray{T,N}, min_xcell::Integer
+    index::AbstractArray{T,N}, min_xcell::Integer, cell_indices::Vararg{Int, N}
 ) where {T,N}
     # first min_xcell particles
-    # val = reduce(+, @cell(index[i, icell, jcell]) for i in 1:min_xcell)
     val = 0
     for i in 1:min_xcell
-        val += @cell(index[i, icell, jcell])
+        val += @cell(index[i, cell_indices...])
     end
     # early escape
     val ≥ min_xcell && return false
 
     # tail
     n = cellnum(index)
-    # val += reduce(+, @cell(index[i, icell, jcell]) for i in min_xcell+1:n)
     for i in min_xcell+1:n
-        val += @cell(index[i, icell, jcell])
+        val += @cell(index[i, cell_indices...])
     end
     return val ≥ min_xcell ? false : true
 end
