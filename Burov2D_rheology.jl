@@ -63,7 +63,6 @@ function init_rheologies(; is_plastic = true)
     end
     # pl        = DruckerPrager(; C = 30e6, ϕ=friction, Ψ=0.0) # non-regularized plasticity
 
-
     # Define rheolgy struct
     rheology = (
         # Name              = "UpperCrust",
@@ -184,7 +183,7 @@ function init_rheologies_isoviscous()
         # Name              = "Plume",
         SetMaterialParams(;
             Phase             = 5,
-            Density           = PT_Density(; ρ0=3.4e3-100, β=β, T0=0.0, α = 3e-5),
+            Density           = PT_Density(; ρ0=3.4e3-0, β=β, T0=0.0, α = 3e-5),
             HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
             Conductivity      = ConstantConductivity(; k=3.5),
             CompositeRheology = CompositeRheology((disl_sublithospheric_mantle, )),

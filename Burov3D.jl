@@ -200,7 +200,7 @@ end
 
 function elliptical_perturbation!(T, δT, xc, yc, zc, r, xvi)
 
-    @parallel_indices (i, j, k) function _elliptical_perturbation!(x, y, z)
+    @parallel_indices (i, j, k) function _elliptical_perturbation!(T, x, y, z)
         @inbounds if (((x[i]-xc))^2 + ((y[j] - yc))^2 + ((z[k] - zc))^2) ≤ r^2
             T[i, j, k] = 2e3
             # T[i, j, k] += δT
@@ -208,7 +208,7 @@ function elliptical_perturbation!(T, δT, xc, yc, zc, r, xvi)
         return nothing
     end
 
-    @parallel _elliptical_perturbation!(xvi...)
+    @parallel _elliptical_perturbation!(T, xvi...)
 end
 
 @parallel_indices (i, j, k) function compute_ρg!(ρg, rheology, args)
@@ -269,9 +269,9 @@ function main3D(nx, ny, nz, ar; figdir="figs2D")
     
     # Physical properties using GeoParams ----------------
     # Define rheolgy struct
-    # rheology     = init_rheologies(; is_plastic = false)
+    rheology     = init_rheologies(; is_plastic = false)
     # rheology_pl  = init_rheologies(; is_plastic = true)
-    rheology  = init_rheologies_isoviscous()
+    # rheology  = init_rheologies_isoviscous()
     κ            = (rheology[1].Conductivity[1].k / (rheology[1].HeatCapacity[1].cp * rheology[1].Density[1].ρ0)).val
     dt = dt_diff = min(di...)^2 / κ / 3.01 # diffusive CFL timestep limiter
     # ----------------------------------------------------
@@ -302,7 +302,7 @@ function main3D(nx, ny, nz, ar; figdir="figs2D")
     # STOKES ---------------------------------------------
     # Allocate arrays needed for every Stokes problem
     stokes    = StokesArrays(ni, ViscoElastic)
-    pt_stokes = PTStokesCoeffs(li, di; ϵ=1e-4,  CFL = 0.75 / √3.1)
+    pt_stokes = PTStokesCoeffs(li, di; ϵ=1e-4,  CFL = 0.1 / √3.1)
     # ----------------------------------------------------
 
     # TEMPERATURE PROFILE --------------------------------
@@ -336,9 +336,9 @@ function main3D(nx, ny, nz, ar; figdir="figs2D")
     thermal_bcs!(thermal.T, thermal_bc)
    
     elliptical_perturbation!(thermal.T, δT, xc_anomaly, yc_anomaly, zc_anomaly, r_anomaly, xvi)
-    @views thermal.T[:, :, end] .= Tmin
-    Tbot = Tmax = 2000.0 + 273
-    @views thermal.T[:, :, 1]   .= Tmax
+    # Tbot = Tmax = 2000.0 + 273
+    # @views thermal.T[:, :, end] .= Tmin
+    # @views thermal.T[:, :, 1]   .= Tmax
     # ----------------------------------------------------
    
     # Buoyancy forces
@@ -383,13 +383,19 @@ function main3D(nx, ny, nz, ar; figdir="figs2D")
         fig
     end
 
+    # # Update buoyancy and viscosity
+    # args_ηv = (; T = thermal.T, P = stokes.P, dt=Inf)
+    # @parallel (@idx ni) compute_viscosity!(η, phase_ratios.center, @strain(stokes)..., args_ηv, rheology)
+    # @parallel (@idx ni) compute_ρg!(ρg[3], phase_ratios.center, rheology, (T=thermal.T, P=stokes.P))
+    # # ------------------------------
+
     # Time loop
     t, it = 0.0, 0
-    nt    = 10
+    nt    = 250
     local iters
-    # while it < nt
-    while (t/(1e6 * 3600 * 24 *365.25)) < 100
-        # Update buoyancy and viscosity -
+    while it < nt
+    # while (t/(1e6 * 3600 * 24 *365.25)) < 100
+        # Update buoyancy and viscosity
         args_ηv = (; T = thermal.T, P = stokes.P, dt=Inf)
         @parallel (@idx ni) compute_viscosity!(η, phase_ratios.center, @strain(stokes)..., args_ηv, rheology)
         @parallel (@idx ni) compute_ρg!(ρg[3], phase_ratios.center, rheology, (T=thermal.T, P=stokes.P))
@@ -407,13 +413,15 @@ function main3D(nx, ny, nz, ar; figdir="figs2D")
             η_vep,
             phase_ratios,
             rheology,
-            Inf,
+            dt,
             igg,
-            iterMax=10e3,
-            nout=500,
+            iterMax=150e3,
+            nout=10,
         );
+
         @parallel (@idx ni) compute_invariant!(stokes.ε.II, @strain(stokes)...)
         dt = compute_dt(stokes, di, dt_diff) * .75
+        println("dt = $(dt/(1e6 * 3600 * 24 *365.25)) Myrs")
         # ------------------------------
 
         # Thermal solver ---------------
@@ -428,6 +436,8 @@ function main3D(nx, ny, nz, ar; figdir="figs2D")
             dt 
         )
         # ------------------------------
+
+        # fig, ax, = scatter(Array(thermal.T[:]), Zv./1e3)
 
         # Advection --------------------
         # interpolate fields from grid vertices to particles
@@ -446,23 +456,26 @@ function main3D(nx, ny, nz, ar; figdir="figs2D")
         # interpolate fields from particle to grid vertices
         gathering_xvertex!(thermal.T, pT, xvi, particles.coords)
         # gather_temperature_xvertex!(thermal.T, pT, ρCₚp, xvi, particles.coords)
-        @views thermal.T[:, :, end]      .= 273.0
-        @views thermal.T[:, :, 1]       .= Tmax
+        @views thermal.T[:, :, end] .= 273.0
+        @views thermal.T[:, :, 1]   .= Tmax
         
+        # scatter!(ax, Array(thermal.T[:]), Zv./1e3)
+        # fig
+
         @show it += 1
         t += dt
 
         # # Plotting ---------------------
-        if it == 1 || rem(it, 10) == 0
+        if it == 1 || rem(it, 5) == 0
             slice_j = Int(ny ÷ 2)
-            p = particles.coords
-            ppx, ppy, ppz = p
-            pxv = ppx.data[:]./1e3;
-            pyv = ppy.data[:]./1e3;
-            pzv = ppz.data[:]./1e3;
-            clr = pPhases.data[:]
-            # ppT = pT.data[:]
-            idxv = particles.index.data[:]
+            # p = particles.coords
+            # ppx, ppy, ppz = p
+            # pxv = ppx.data[:]./1e3;
+            # pyv = ppy.data[:]./1e3;
+            # pzv = ppz.data[:]./1e3;
+            # clr = pPhases.data[:];
+            # ppT = pT.data[:];
+            # idxv = particles.index.data[:];
 
             fig = Figure(resolution = (1000, 1600), title = "t = $t")
             ax1 = Axis(fig[1,1], aspect = ar, title = "T [K]  (t=$(t/(1e6 * 3600 * 24 *365.25)) Myrs)")
@@ -471,8 +484,8 @@ function main3D(nx, ny, nz, ar; figdir="figs2D")
             # ax4 = Axis(fig[4,1], aspect = ar, title = "ρ [kg/m3]")
             # ax4 = Axis(fig[4,1], aspect = ar, title = "τII - τy [Mpa]")
             ax4 = Axis(fig[4,1], aspect = ar, title = "log10(η)")
-            # h1 = heatmap!(ax1, xvi[1].*1e-3, xvi[3].*1e-3, Array(thermal.T[:,slice_j,:]) , colormap=:batlow)
-            h1 = heatmap!(ax1, xvi[1].*1e-3, xvi[3].*1e-3, Array(abs.(ρg[3][:,slice_j,:]./9.81)) , colormap=:batlow)
+            h1 = heatmap!(ax1, xvi[1].*1e-3, xvi[3].*1e-3, Array(thermal.T[:,slice_j,:]), colormap=:batlow)
+            # h1 = heatmap!(ax1, xvi[1].*1e-3, xvi[3].*1e-3, Array(abs.(ρg[3][:,slice_j,:]./9.81)) , colormap=:batlow)
             h2 = heatmap!(ax2, xci[1].*1e-3, xvi[3].*1e-3, Array(stokes.V.Vz[:, slice_j,:]) , colormap=:batlow)
             # h2 = scatter!(ax2, Array(pxv[idxv]), Array(pyv[idxv]), color=Array(clr[idxv]))
             h3 = heatmap!(ax3, xci[1].*1e-3, xci[2].*1e-3, Array(stokes.τ.II[:,slice_j,:].*1e-6) , colormap=:batlow) 
@@ -487,15 +500,19 @@ function main3D(nx, ny, nz, ar; figdir="figs2D")
             Colorbar(fig[1,2], h1) #, height=100)
             Colorbar(fig[2,2], h2) #, height=100)
             Colorbar(fig[3,2], h3) #, height=100)
-            # Colorbar(fig[4,2], h4) #, height=100)
+            Colorbar(fig[4,2], h4) #, height=100)
             save( joinpath(figdir, "$(it).png"), fig)
             fig
+
+            # save vtk files
+            data_v = (; Temperature = Array(thermal.T))
+            data_c = (; TauII = Array(stokes.τ.II))
+            JustRelax.DataIO.save_vtk(joinpath(figdir, "$(it)"), xvi, xci, data_v, data_c)
         end
         # ------------------------------
 
     end
 
-    # return (ni=ni, xci=xci, li=li, di=di), thermal
     return nothing
 end
 
@@ -510,4 +527,4 @@ function run()
     main3D(nx, ny, nz, ar; figdir=figdir);
 end
 
-# run()
+run()
