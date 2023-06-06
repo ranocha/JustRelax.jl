@@ -58,7 +58,12 @@ import JustRelax:
     Residual, StokesArrays, PTStokesCoeffs, AbstractStokesModel, ViscoElastic, IGG
 import JustRelax: compute_maxloc!, solve!
 
-export solve!, pureshear_bc!
+export solve!, pureshear_bc!, smooth!
+
+@parallel function smooth!(A2, A, fact)
+    @inn(A2) = @inn(A) + inv(6.1 * fact) * (@d2_xi(A) + @d2_yi(A) + @d2_zi(A))
+    return nothing
+end
 
 @parallel function update_τ_o!(
     τxx_o, τyy_o, τzz_o, τxy_o, τxz_o, τyz_o, τxx, τyy, τzz, τxy, τxz, τyz
@@ -1006,15 +1011,22 @@ function JustRelax.solve!(
 
             # Update viscosity
             args_ηv = (; T = thermal.T, P = stokes.P, dt=Inf)
-            ν = iter > 1 ? 0.1 : 1.0
-            @parallel (@idx ni) compute_viscosity!(η, 0.1, phase_ratios.center, @strain(stokes)..., args_ηv, rheology)
-            @hide_communication b_width begin # communication/computation overlap
-                @parallel compute_maxloc!(ητ, η)
-                update_halo!(ητ)
+            # ν = iter ≥ nout ? 0.05 : 0.0
+            # ν = 0.0
+            # ν = (iter, 1000) == 0 ? 0.5 : 1.0
+            if err < ϵ*10
+                println("$err")
+                # if (iter, 100) == 0 # err < 1e-3 || 
+                ν = 0.05
+                @parallel (@idx ni) compute_viscosity!(η, ν, phase_ratios.center, @strain(stokes)..., args_ηv, rheology)
+                @hide_communication b_width begin # communication/computation overlap
+                    @parallel compute_maxloc!(ητ, η)
+                    update_halo!(ητ)
+                end
+                @parallel (1:ny, 1:nz) free_slip_x!(ητ)
+                @parallel (1:nx, 1:nz) free_slip_y!(ητ)
+                @parallel (1:nx, 1:ny) free_slip_z!(ητ)
             end
-            @parallel (1:ny, 1:nz) free_slip_x!(ητ)
-            @parallel (1:nx, 1:nz) free_slip_y!(ητ)
-            @parallel (1:nx, 1:ny) free_slip_z!(ητ)
 
             # Update buoyancy
             @parallel (@idx ni) compute_ρg!(ρg[3], phase_ratios.center, rheology, (T=thermal.T, P=stokes.P))
@@ -1206,13 +1218,13 @@ end
     dτ_r  = inv(θ_dτ + η_e + 1.0)
 
     # cache out tensors
-    εij_p   = cache_tensor_stagg(εxx, εyy, εzz, εyzv, εxzv, εxyv) 
-    τij_p_o = cache_tensor_stagg(τxx_old, τyy_old, τzz_old, τyzv_old, τxzv_old, τxyv_old)
-    τij     = cache_tensor(τxx, τyy, τzz, τyz, τxz, τxy)
+    εij   = cache_tensor_stagg(εxx, εyy, εzz, εyzv, εxzv, εxyv) # shear components @ cell corners
+    τij_o = cache_tensor_stagg(τxx_old, τyy_old, τzz_old, τyzv_old, τxzv_old, τxyv_old) # shear components @ cell corners
+    τij   = cache_tensor(τxx, τyy, τzz, τyz, τxz, τxy) # shear components @ cell centers
 
     # Compute stress increments
     dτ = ntuple(Val6) do i 
-        dτ_r * (-(τij[i] - τij_p_o[i]) * η_e - τij[i] + 2.0 * ηij * (εij_p[i]))
+        dτ_r * (-(τij[i] - τij_o[i]) * η_e - τij[i] + 2.0 * ηij * (εij[i]))
     end
     # Trial stress
     τII_trial             = second_invariant((dτ .+ τij)...)
@@ -1233,18 +1245,18 @@ end
         end
         # corrected stress increment
         dτ_pl = ntuple(Val6) do i 
-            dτ_r * (-(τij[i] - τij_p_o[i]) * η_e - τij[i] + 2.0 * ηij * (εij_p[i] - λdQdτ[i]))
+            dτ_r * (-(τij[i] - τij_o[i]) * η_e - τij[i] + 2.0 * ηij * (εij[i] - λdQdτ[i]))
         end
         # update stress 
         τij_corrected  = dτ_pl .+ τij
-        τxx[i, j, k]  += τij_corrected[1]
-        τyy[i, j, k]  += τij_corrected[2]
-        τzz[i, j, k]  += τij_corrected[3]
-        τyz[i, j, k]  += τij_corrected[4]
-        τxz[i, j, k]  += τij_corrected[5]
-        τxy[i, j, k]  += τij_corrected[6]
+        τxx[i, j, k]   = τij_corrected[1]
+        τyy[i, j, k]   = τij_corrected[2]
+        τzz[i, j, k]   = τij_corrected[3]
+        τyz[i, j, k]   = τij_corrected[4]
+        τxz[i, j, k]   = τij_corrected[5]
+        τxy[i, j, k]   = τij_corrected[6]
         # visco-elastic strain rates
-        ε_ve           = ntuple(i-> εij_p[i] + 0.5 * τij_p_o[i] * _Gdt, Val6)
+        ε_ve           = ntuple(i -> εij[i] + 0.5 * τij_o[i] * _Gdt, Val6)
         εII_ve         = second_invariant(ε_ve...)
         τII            = second_invariant(τij_corrected...)
         η_vep[i, j, k] = ifelse(iszero(εII_ve), ηij, τII * 0.5 * inv(εII_ve))
@@ -1253,12 +1265,12 @@ end
     else # we are in the non-plastic domain, business as usual
 
         τij_corrected  = dτ .+ τij
-        τxx[i, j, k]  += τij_corrected[1]
-        τyy[i, j, k]  += τij_corrected[2]
-        τzz[i, j, k]  += τij_corrected[3]
-        τyz[i, j, k]  += τij_corrected[4]
-        τxz[i, j, k]  += τij_corrected[5]
-        τxy[i, j, k]  += τij_corrected[6]
+        τxx[i, j, k]   = τij_corrected[1]
+        τyy[i, j, k]   = τij_corrected[2]
+        τzz[i, j, k]   = τij_corrected[3]
+        τyz[i, j, k]   = τij_corrected[4]
+        τxz[i, j, k]   = τij_corrected[5]
+        τxy[i, j, k]   = τij_corrected[6]
         η_vep[i, j, k] = ηij
         TII[i,j,k]     = second_invariant(τij_corrected...)
 
@@ -1334,7 +1346,7 @@ end
 
     av_T() = _av(args.T, i, j, k) - 273.0
 
-    ρg[i, j, k] = -compute_density_ratio(phase_ratios[i, j, k], rheology, (; T = av_T(), P=args.P[i, j, k])) *
+    ρg[i, j, k] = compute_density_ratio(phase_ratios[i, j, k], rheology, (; T = av_T(), P=args.P[i, j, k])) *
         compute_gravity(rheology[1])
     return nothing
 end

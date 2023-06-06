@@ -25,7 +25,7 @@ function shuffle_particles_vertex!(particles::Particles, grid::NTuple{3,T}, args
     # unpack
     (; coords, index) = particles
     nxi = length.(grid)
-    nx, ny = nxi
+    nx, ny, nz = nxi
     dxi = compute_dx(grid)
 
     n_i = ceil(Int, nx * 0.5)

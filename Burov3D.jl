@@ -1,5 +1,5 @@
-# ENV["PS_PACKAGE"] = "CUDA"
-ENV["PS_PACKAGE"] = "Threads"
+ENV["PS_PACKAGE"] = "CUDA"
+# ENV["PS_PACKAGE"] = "Threads"
 
 using JustRelax
 using CUDA
@@ -7,8 +7,8 @@ using CUDA
 # using Pkg; Pkg.add(url="https://github.com/JuliaGeodynamics/GeoParams.jl"; rev="adm-arrhenius_dim")
 
 # setup ParallelStencil.jl environment
-# model = PS_Setup(:gpu, Float64, 3)
-model = PS_Setup(:cpu, Float64, 3)
+model = PS_Setup(:gpu, Float64, 3)
+# model = PS_Setup(:cpu, Float64, 3)
 environment!(model)
 
 using Printf, LinearAlgebra, GeoParams, GLMakie, SpecialFunctions, CellArrays
@@ -110,7 +110,7 @@ end
     _gather_xz(A) = gather_xz(A, i, j, k)
     _gather_xy(A) = gather_xy(A, i, j, k)
     
-    εII_0 = (εxx[i, j, k] == 0 && εyy[i, j, k] == 0 && εzz[i, j, k] == 0) ? 1e-15 : 0.0
+    εII_0 = (εxx[i, j, k] == 0 && εyy[i, j, k] == 0 && εzz[i, j, k] == 0) ? 1e-20 : 0.0
     _zeros = (0.0, 0.0, 0.0, 0.0)
     ratio_ij = ratios_center[i, j, k]
     args_ij  = (; dt = args.dt, P = args.P[i, j, k],  T=av_T(), τII_old=0.0)
@@ -162,7 +162,7 @@ end
 
 # Initial pressure guess
 @parallel_indices (i,j,k) function init_P!(P, ρg, z)
-    P[i,j,k] = ρg[i,j,k] * abs(z[k])
+    P[i,j,k] = abs(ρg[i,j,k] * z[k])
     return nothing
 end
 
@@ -202,8 +202,8 @@ function elliptical_perturbation!(T, δT, xc, yc, zc, r, xvi)
 
     @parallel_indices (i, j, k) function _elliptical_perturbation!(T, x, y, z)
         @inbounds if (((x[i]-xc))^2 + ((y[j] - yc))^2 + ((z[k] - zc))^2) ≤ r^2
-            T[i, j, k] = 2e3
-            # T[i, j, k] += δT
+            # T[i, j, k] = 2e3
+            T[i, j, k] += δT
         end
         return nothing
     end
@@ -215,7 +215,7 @@ end
    
     av_T() = av(args.T, i, j, k) - 273.0
 
-    @inbounds ρg[i, j, k] = -compute_density(rheology, (; T = av_T(), P=args.P[i, j, k])) * compute_gravity(rheology.Gravity[1])
+    @inbounds ρg[i, j, k] = compute_density(rheology, (; T = av_T(), P=args.P[i, j, k])) * compute_gravity(rheology.Gravity[1])
 
     return nothing
 end
@@ -224,7 +224,7 @@ end
 
     av_T() = av(args.T, i, j, k) - 273.0
 
-    ρg[i, j, k] = -compute_density_ratio(phase_ratios[i, j, k], rheology, (; T = av_T(), P=args.P[i, j, k])) *
+    ρg[i, j, k] = compute_density_ratio(phase_ratios[i, j, k], rheology, (; T = av_T(), P=args.P[i, j, k])) *
         compute_gravity(rheology[1])
     return nothing
 end
@@ -261,9 +261,9 @@ function main3D(nx, ny, nz, ar; figdir="figs2D")
 
     # Init MPI -------------------------------------------
     igg  = IGG(
-        init_global_grid(nx, ny, nz; init_MPI=false)...
+        init_global_grid(nx, ny, nz; init_MPI=JustRelax.MPI.Initialized() ? false : true)...
     )
-    ni_v = nx_g(), ny_g(), nz_g()
+    # ni_v = nx_g(), ny_g(), nz_g()
     # ni_v = (nx-2)*igg.dims[1], (ny-2)*igg.dims[2], (nz-2)*igg.dims[3]
     # ----------------------------------------------------
     
@@ -302,7 +302,7 @@ function main3D(nx, ny, nz, ar; figdir="figs2D")
     # STOKES ---------------------------------------------
     # Allocate arrays needed for every Stokes problem
     stokes    = StokesArrays(ni, ViscoElastic)
-    pt_stokes = PTStokesCoeffs(li, di; ϵ=1e-4,  CFL = 0.1 / √3.1)
+    pt_stokes = PTStokesCoeffs(li, di; ϵ=1e-4,  CFL = 0.5 / √3.1)
     # ----------------------------------------------------
 
     # TEMPERATURE PROFILE --------------------------------
@@ -315,7 +315,7 @@ function main3D(nx, ny, nz, ar; figdir="figs2D")
     # Tmin, Tmax  = 273.0, 1500.0
     # @parallel init_T!(thermal.T, xvi[2])
     # initialize thermal profile - Half space cooling
-    Tmin, Tmax  = 273.0, 1500.0 +273
+    Tmin, Tmax  = 273.0, 2e3 # 1500.0 +273
     @views thermal.T            .= Tmax
     @views thermal.T[:, :, end] .= Tmin
    
@@ -356,7 +356,6 @@ function main3D(nx, ny, nz, ar; figdir="figs2D")
     # Boundary conditions
     flow_bcs = FlowBoundaryConditions(; 
         free_slip   = (left=true , right=true , top=true , bot=true , front=true , back=true ),
-        # free_slip   = (left=false, right=false, top=false, bot=false, front=false, back=false),
         no_slip     = (left=false, right=false, top=false, bot=false, front=false, back=false),
         periodicity = (left=false, right=false, top=false, bot=false, front=false, back=false),
         free_surface = false
@@ -392,7 +391,11 @@ function main3D(nx, ny, nz, ar; figdir="figs2D")
     # Time loop
     t, it = 0.0, 0
     nt    = 250
+    ηs    = similar(η);
+    η0    = deepcopy(η);
+    
     local iters
+
     while it < nt
     # while (t/(1e6 * 3600 * 24 *365.25)) < 100
         # Update buoyancy and viscosity
@@ -400,7 +403,18 @@ function main3D(nx, ny, nz, ar; figdir="figs2D")
         @parallel (@idx ni) compute_viscosity!(η, phase_ratios.center, @strain(stokes)..., args_ηv, rheology)
         @parallel (@idx ni) compute_ρg!(ρg[3], phase_ratios.center, rheology, (T=thermal.T, P=stokes.P))
         # ------------------------------
- 
+
+        for _ in 1:10
+            @parallel JustRelax.Elasticity3D.smooth!(ηs, η, 1)
+            η, ηs = ηs, η
+            @views η[1,:,:]   .= η[2,:,:]
+            @views η[:,1,:]   .= η[:,2,:]
+            @views η[:,:,1]   .= η[:,:,2]
+            @views η[end,:,:] .= η[end-1,:,:]
+            @views η[:,end,:] .= η[:,end-1,:]
+            @views η[:,:,end] .= η[:,:,end-1]
+        end
+        
         # Stokes solver ----------------
         iters = solve!(
             stokes,
@@ -413,10 +427,10 @@ function main3D(nx, ny, nz, ar; figdir="figs2D")
             η_vep,
             phase_ratios,
             rheology,
-            dt,
+            Inf,
             igg,
-            iterMax=150e3,
-            nout=10,
+            iterMax=15e3,
+            nout=1000,
         );
 
         @parallel (@idx ni) compute_invariant!(stokes.ε.II, @strain(stokes)...)
@@ -527,4 +541,20 @@ function run()
     main3D(nx, ny, nz, ar; figdir=figdir);
 end
 
-run()
+# run()
+
+# ηs = deepcopy(η)
+# η = deepcopy(ηs)
+# ν = 0.95
+
+# for it in 1:250
+#     η = @. exp((1-ν)*log(η0) + ν*log(η))
+#     if norm(@.(log10(η0) - log10(η)), 2) < 1e-3
+#         @show it 
+#         break
+#     end
+# end
+
+# f,ax,=scatter(Array(log10.(η0[:])), Zc./1e3)
+# scatter!(ax,Array(log10.(η[:])), Zc./1e3)
+# f

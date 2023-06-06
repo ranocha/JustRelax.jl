@@ -124,12 +124,12 @@ function init_rheologies(; is_plastic = true)
 end
 
 function init_rheologies_isoviscous()
-    disl_upper_crust            = LinearViscous(; η=1e21)
+    disl_upper_crust            = LinearViscous(; η=1e22)
     disl_lower_crust            = LinearViscous(; η=1e21)
-    disl_lithospheric_mantle    = LinearViscous(; η=1e21)
-    disl_sublithospheric_mantle = LinearViscous(; η=1e21)
-    diff_lithospheric_mantle    = LinearViscous(; η=1e21)
-    diff_sublithospheric_mantle = LinearViscous(; η=1e21)
+    disl_lithospheric_mantle    = LinearViscous(; η=1e20)
+    disl_sublithospheric_mantle = LinearViscous(; η=1e20)
+    diff_lithospheric_mantle    = LinearViscous(; η=1e20)
+    diff_sublithospheric_mantle = LinearViscous(; η=1e20)
 
     # Physical properties using GeoParams ----------------
     η_reg     = 1e18
@@ -140,65 +140,67 @@ function init_rheologies_isoviscous()
     pl        = DruckerPrager_regularised(; C = cohesion, ϕ=friction, η_vp=η_reg, Ψ=0.0) # non-regularized plasticity
     el        = SetConstantElasticity(; G=G0, ν=0.5)                             # elastic spring
     β         = inv(get_Kb(el))
+    ρ =  PT_Density(; ρ0=3.3e3, β=β, T0=0.0, α = 3e-5)
+    upper_crust = SetMaterialParams(;
+        Phase             = 1,
+        Density           = PT_Density(; ρ0=2.7e3, β=β, T0=0.0, α = 2.5e-5),
+        HeatCapacity      = ConstantHeatCapacity(; cp=7.5e2),
+        Conductivity      = ConstantConductivity(; k=2.5),
+        CompositeRheology = CompositeRheology((disl_upper_crust, )),
+        Elasticity        = el,
+        Gravity           = ConstantGravity(; g=-9.81),
+    )
+    # Name              = "LowerCrust",
+    lower_crust = SetMaterialParams(;
+        Phase             = 2,
+        Density           = PT_Density(; ρ0=2.9e3, β=β, T0=0.0, α = 2.5e-5),
+        HeatCapacity      = ConstantHeatCapacity(; cp=7.5e2),
+        Conductivity      = ConstantConductivity(; k=2.5),
+        CompositeRheology = CompositeRheology((disl_lower_crust, )),
+        Elasticity        = el,
+    )
+    # Name              = "LithosphericMantle",
+    litho_mantle = SetMaterialParams(;
+        Phase             = 3,
+        Density           = PT_Density(; ρ0=3.3e3, β=β, T0=0.0, α = 3e-5),
+        HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
+        Conductivity      = ConstantConductivity(; k=3.5),
+        CompositeRheology = CompositeRheology((disl_lithospheric_mantle,)),
+        # Elasticity        = el,
+    )
+    # Name              = "SubLithosphericMantle",
+    sublitho_mantle = SetMaterialParams(;
+        Phase             = 4,
+        Density           = PT_Density(; ρ0=3.4e3, β=β, T0=0.0, α = 3e-5),
+        HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
+        Conductivity      = ConstantConductivity(; k=3.5),
+        CompositeRheology = CompositeRheology((disl_sublithospheric_mantle,)),
+        # Elasticity        = el,
+    )
+    # Name              = "Plume",
+    plume = SetMaterialParams(;
+        Phase             = 5,
+        Density           = PT_Density(; ρ0=3.4e3-0, β=β, T0=0.0, α = 3e-5),
+        HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
+        Conductivity      = ConstantConductivity(; k=3.5),
+        CompositeRheology = CompositeRheology((disl_sublithospheric_mantle, )),
+        # Elasticity        = el,
+    )
+    # Name              = "StickyAir",
+    sticky_air = SetMaterialParams(;
+        Phase             = 6,
+        Density           = ConstantDensity(; ρ=2e3),
+        HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
+        Conductivity      = ConstantConductivity(; k=15.0),
+        CompositeRheology = CompositeRheology((LinearViscous(; η=1e21),)),
+        # Elasticity        = SetConstantElasticity(; G=Inf, ν=0.5) ,
+    )
 
     # Define rheolgy struct
-    rheology = (
-        # Name              = "UpperCrust",
-        SetMaterialParams(;
-            Phase             = 1,
-            Density           = PT_Density(; ρ0=2.7e3, β=β, T0=0.0, α = 2.5e-5),
-            HeatCapacity      = ConstantHeatCapacity(; cp=7.5e2),
-            Conductivity      = ConstantConductivity(; k=2.5),
-            CompositeRheology = CompositeRheology((disl_upper_crust, )),
-            Elasticity        = el,
-            Gravity           = ConstantGravity(; g=-9.81),
-        ),
-        # Name              = "LowerCrust",
-        SetMaterialParams(;
-            Phase             = 2,
-            Density           = PT_Density(; ρ0=2.9e3, β=β, T0=0.0, α = 2.5e-5),
-            HeatCapacity      = ConstantHeatCapacity(; cp=7.5e2),
-            Conductivity      = ConstantConductivity(; k=2.5),
-            CompositeRheology = CompositeRheology((disl_lower_crust, )),
-            Elasticity        = el,
-        ),
-        # Name              = "LithosphericMantle",
-        SetMaterialParams(;
-            Phase             = 3,
-            Density           = PT_Density(; ρ0=3.3e3, β=β, T0=0.0, α = 3e-5),
-            HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
-            Conductivity      = ConstantConductivity(; k=3.5),
-            CompositeRheology = CompositeRheology((disl_lithospheric_mantle,)),
-            # Elasticity        = el,
-        ),
-        # Name              = "SubLithosphericMantle",
-        SetMaterialParams(;
-            Phase             = 4,
-            Density           = PT_Density(; ρ0=3.4e3, β=β, T0=0.0, α = 3e-5),
-            HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
-            Conductivity      = ConstantConductivity(; k=3.5),
-            CompositeRheology = CompositeRheology((disl_sublithospheric_mantle,)),
-            # Elasticity        = el,
-        ),
-        # Name              = "Plume",
-        SetMaterialParams(;
-            Phase             = 5,
-            Density           = PT_Density(; ρ0=3.4e3-0, β=β, T0=0.0, α = 3e-5),
-            HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
-            Conductivity      = ConstantConductivity(; k=3.5),
-            CompositeRheology = CompositeRheology((disl_sublithospheric_mantle, )),
-            # Elasticity        = el,
-        ),
-        # Name              = "StickyAir",
-        SetMaterialParams(;
-            Phase             = 6,
-            Density           = ConstantDensity(; ρ=2e3),
-            HeatCapacity      = ConstantHeatCapacity(; cp=1.25e3),
-            Conductivity      = ConstantConductivity(; k=15.0),
-            CompositeRheology = CompositeRheology((LinearViscous(; η=1e21),)),
-            # Elasticity        = SetConstantElasticity(; G=Inf, ν=0.5) ,
-        ),
-    )
+    rheology = upper_crust, lower_crust, litho_mantle, sublitho_mantle, plume, sticky_air
+    # rheology = upper_crust, upper_crust, upper_crust, upper_crust, upper_crust, upper_crust
+
+    return rheology
 end
 
 function init_phases!(phases, particles::Particles, Lx; d=650e3, r=50e3)
