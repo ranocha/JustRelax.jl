@@ -224,13 +224,13 @@ function make_PTstokes_struct!()
             ηdτ::T
 
             function PTStokesCoeffs(
-                li::NTuple{N,T},
+                li,
                 di;
                 ϵ=1e-8,
                 Re=3π,
                 CFL=(N == 2 ? 0.9 / √2.1 : 0.9 / √3.1),
                 r=0.7,
-            ) where {N,T}
+            )
                 lτ = min(li...)
                 Vpdτ = min(di...) * CFL
                 θ_dτ = lτ * (r + 2.0) / (Re * Vpdτ)

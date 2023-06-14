@@ -989,7 +989,7 @@ function JustRelax.solve!(
     @parallel (1:nx, 1:ny) free_slip_z!(ητ)
 
     # errors
-    err = 2 * ϵ
+    err = Inf
     iter = 0
     cont = 0
     err_evo1 = Float64[]
@@ -1006,31 +1006,10 @@ function JustRelax.solve!(
 
     # solver loop
     wtime0 = 0.0
+    boo = false
     while iter < 2 || (err > ϵ && iter ≤ iterMax)
         wtime0 += @elapsed begin
 
-            # Update viscosity
-            args_ηv = (; T = thermal.T, P = stokes.P, dt=Inf)
-            # ν = iter ≥ nout ? 0.05 : 0.0
-            # ν = 0.0
-            # ν = (iter, 1000) == 0 ? 0.5 : 1.0
-            if err < ϵ*10
-                println("$err")
-                # if (iter, 100) == 0 # err < 1e-3 || 
-                ν = 0.05
-                @parallel (@idx ni) compute_viscosity!(η, ν, phase_ratios.center, @strain(stokes)..., args_ηv, rheology)
-                @hide_communication b_width begin # communication/computation overlap
-                    @parallel compute_maxloc!(ητ, η)
-                    update_halo!(ητ)
-                end
-                @parallel (1:ny, 1:nz) free_slip_x!(ητ)
-                @parallel (1:nx, 1:nz) free_slip_y!(ητ)
-                @parallel (1:nx, 1:ny) free_slip_z!(ητ)
-            end
-
-            # Update buoyancy
-            @parallel (@idx ni) compute_ρg!(ρg[3], phase_ratios.center, rheology, (T=thermal.T, P=stokes.P))
-         
             @parallel (@idx ni) compute_∇V!(
                 stokes.∇V, @velocity(stokes)..., _di...
             )
@@ -1046,12 +1025,38 @@ function JustRelax.solve!(
                 pt_stokes.r,
                 pt_stokes.θ_dτ,
             )
+
             @parallel (@idx ni) compute_strain_rate!(
                 stokes.∇V,
                 @strain(stokes)...,
                 @velocity(stokes)...,
                 _di...,
             )
+
+            # Update viscosity
+            args_ηv = (; T = thermal.T, P = stokes.P, dt=Inf)
+            ν = iter ≥ nout ? 0.05 : 0.0
+            # ν = 0.0
+            # ν = (iter, 1000) == 0 ? 0.5 : 1.0
+            if err < 1e-3 && !boo
+                boo = true
+                println("Going non-linear at iteration $iter")
+            end
+            if boo
+                # Update buoyancy
+                @parallel (@idx ni) compute_ρg!(ρg[3], phase_ratios.center, rheology, (T=thermal.T, P=stokes.P))
+         
+                ν = 1.0
+                @parallel (@idx ni) compute_viscosity!(η, ν, phase_ratios.center, @strain(stokes)..., args_ηv, rheology)
+                @hide_communication b_width begin # communication/computation overlap
+                    @parallel compute_maxloc!(ητ, η)
+                    update_halo!(ητ)
+                end
+                @parallel (1:ny, 1:nz) free_slip_x!(ητ)
+                @parallel (1:nx, 1:nz) free_slip_y!(ητ)
+                @parallel (1:nx, 1:ny) free_slip_z!(ητ)
+            end
+
             @parallel (@idx ni) compute_τ_new!(
                 @stress_center(stokes)...,
                 stokes.τ.II,
@@ -1065,6 +1070,7 @@ function JustRelax.solve!(
                 dt,
                 pt_stokes.θ_dτ,
             )
+
             # @parallel center2vertex!(
             #     stokes.τ.yz, stokes.τ.xz, stokes.τ.xy, stokes.τ.yz_c, stokes.τ.xz_c, stokes.τ.xy_c
             # )
@@ -1143,6 +1149,7 @@ function JustRelax.solve!(
         end
     end
 
+    @show boo
     av_time = wtime0 / (iter - 1) # average time per iteration
     update_τ_o!(stokes) # copy τ into τ_o
 

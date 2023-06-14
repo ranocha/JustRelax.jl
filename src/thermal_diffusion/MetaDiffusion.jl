@@ -76,8 +76,8 @@ function make_PTthermal_struct!()
             dτ_ρ::M
 
             function PTThermalCoeffs(
-                K, ρCp, dt, di::NTuple{nDim,T}, li::NTuple{nDim,Any}; ϵ=1e-8, CFL=0.9 / √3
-            ) where {nDim,T}
+                K, ρCp, dt, di::NTuple{nDim,Any}, li::NTuple{nDim,Any}; ϵ=1e-8, CFL=0.9 / √3
+            ) where nDim
                 Vpdτ = min(di...) * CFL
                 max_lxyz = max(li...)
                 max_lxyz2 = max_lxyz^2

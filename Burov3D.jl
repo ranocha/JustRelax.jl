@@ -269,7 +269,8 @@ function main3D(nx, ny, nz, ar; figdir="figs2D")
     
     # Physical properties using GeoParams ----------------
     # Define rheolgy struct
-    rheology     = init_rheologies(; is_plastic = false)
+    # rheology     = init_rheologies(; is_plastic = false)
+    rheology     = init_rheologies_simple(; is_plastic = false)
     # rheology_pl  = init_rheologies(; is_plastic = true)
     # rheology  = init_rheologies_isoviscous()
     κ            = (rheology[1].Conductivity[1].k / (rheology[1].HeatCapacity[1].cp * rheology[1].Density[1].ρ0)).val
@@ -302,7 +303,7 @@ function main3D(nx, ny, nz, ar; figdir="figs2D")
     # STOKES ---------------------------------------------
     # Allocate arrays needed for every Stokes problem
     stokes    = StokesArrays(ni, ViscoElastic)
-    pt_stokes = PTStokesCoeffs(li, di; ϵ=1e-4,  CFL = 0.5 / √3.1)
+    pt_stokes = PTStokesCoeffs(li, di; ϵ=1e-4,  CFL = 0.75 / √3.1)
     # ----------------------------------------------------
 
     # TEMPERATURE PROFILE --------------------------------
@@ -391,8 +392,8 @@ function main3D(nx, ny, nz, ar; figdir="figs2D")
     # Time loop
     t, it = 0.0, 0
     nt    = 250
-    ηs    = similar(η);
-    η0    = deepcopy(η);
+    # ηs    = similar(η);
+    # η0    = deepcopy(η);
     
     local iters
 
@@ -404,16 +405,16 @@ function main3D(nx, ny, nz, ar; figdir="figs2D")
         @parallel (@idx ni) compute_ρg!(ρg[3], phase_ratios.center, rheology, (T=thermal.T, P=stokes.P))
         # ------------------------------
 
-        for _ in 1:10
-            @parallel JustRelax.Elasticity3D.smooth!(ηs, η, 1)
-            η, ηs = ηs, η
-            @views η[1,:,:]   .= η[2,:,:]
-            @views η[:,1,:]   .= η[:,2,:]
-            @views η[:,:,1]   .= η[:,:,2]
-            @views η[end,:,:] .= η[end-1,:,:]
-            @views η[:,end,:] .= η[:,end-1,:]
-            @views η[:,:,end] .= η[:,:,end-1]
-        end
+        # for _ in 1:10
+        #     @parallel JustRelax.Elasticity3D.smooth!(ηs, η, 1)
+        #     η, ηs = ηs, η
+        #     @views η[1,:,:]   .= η[2,:,:]
+        #     @views η[:,1,:]   .= η[:,2,:]
+        #     @views η[:,:,1]   .= η[:,:,2]
+        #     @views η[end,:,:] .= η[end-1,:,:]
+        #     @views η[:,end,:] .= η[:,end-1,:]
+        #     @views η[:,:,end] .= η[:,:,end-1]
+        # end
         
         # Stokes solver ----------------
         iters = solve!(
@@ -427,9 +428,9 @@ function main3D(nx, ny, nz, ar; figdir="figs2D")
             η_vep,
             phase_ratios,
             rheology,
-            Inf,
+            dt,
             igg,
-            iterMax=15e3,
+            iterMax=150e3,
             nout=1000,
         );
 
@@ -502,8 +503,8 @@ function main3D(nx, ny, nz, ar; figdir="figs2D")
             # h1 = heatmap!(ax1, xvi[1].*1e-3, xvi[3].*1e-3, Array(abs.(ρg[3][:,slice_j,:]./9.81)) , colormap=:batlow)
             h2 = heatmap!(ax2, xci[1].*1e-3, xvi[3].*1e-3, Array(stokes.V.Vz[:, slice_j,:]) , colormap=:batlow)
             # h2 = scatter!(ax2, Array(pxv[idxv]), Array(pyv[idxv]), color=Array(clr[idxv]))
-            h3 = heatmap!(ax3, xci[1].*1e-3, xci[2].*1e-3, Array(stokes.τ.II[:,slice_j,:].*1e-6) , colormap=:batlow) 
-            # h3 = heatmap!(ax3, xci[1].*1e-3, xci[3].*1e-3, Array(log10.(stokes.ε.II[:,slice_j,:])) , colormap=:batlow) 
+            # h3 = heatmap!(ax3, xci[1].*1e-3, xci[2].*1e-3, Array(stokes.τ.II[:,slice_j,:].*1e-6) , colormap=:batlow) 
+            h3 = heatmap!(ax3, xci[1].*1e-3, xci[3].*1e-3, Array(log10.(stokes.ε.II[:,slice_j,:])) , colormap=:batlow) 
             # # h3 = heatmap!(ax3, xci[1].*1e-3, xci[2].*1e-3, Array(log10.(abs.(stokes.ε.xx))) , colormap=:batlow) 
             h4 = heatmap!(ax4, xci[1].*1e-3, xci[3].*1e-3, Array(log10.(η[:,slice_j,:])) , colormap=:batlow)
             # h4 = heatmap!(ax4, xci[1].*1e-3, xci[2].*1e-3, Array(abs.(ρg[2]./9.81)) , colormap=:batlow)
@@ -515,8 +516,8 @@ function main3D(nx, ny, nz, ar; figdir="figs2D")
             Colorbar(fig[2,2], h2) #, height=100)
             Colorbar(fig[3,2], h3) #, height=100)
             Colorbar(fig[4,2], h4) #, height=100)
-            save( joinpath(figdir, "$(it).png"), fig)
             fig
+            save( joinpath(figdir, "$(it).png"), fig)
 
             # save vtk files
             data_v = (; Temperature = Array(thermal.T))
@@ -543,18 +544,5 @@ end
 
 # run()
 
-# ηs = deepcopy(η)
-# η = deepcopy(ηs)
-# ν = 0.95
-
-# for it in 1:250
-#     η = @. exp((1-ν)*log(η0) + ν*log(η))
-#     if norm(@.(log10(η0) - log10(η)), 2) < 1e-3
-#         @show it 
-#         break
-#     end
-# end
-
-# f,ax,=scatter(Array(log10.(η0[:])), Zc./1e3)
-# scatter!(ax,Array(log10.(η[:])), Zc./1e3)
-# f
+ν = 1.0
+@parallel (@idx ni) JustRelax.Elasticity3D.compute_viscosity!(η, 0.5, phase_ratios.center, @strain(stokes)..., args_ηv, rheology)
